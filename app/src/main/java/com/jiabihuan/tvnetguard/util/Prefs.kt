@@ -59,6 +59,21 @@ object Prefs {
         get() = sp.getInt(KEY_MODE, 0)
         set(v) = sp.edit().putInt(KEY_MODE, v).apply()
 
+    /** 是否显示桌面悬浮窗 */
+    var floatWindow: Boolean
+        get() = sp.getBoolean("float_window", false)
+        set(v) = sp.edit().putBoolean("float_window", v).apply()
+
+    /** 悬浮窗锁定显示的应用 uid；-1 表示显示整机总速率 */
+    var floatLockUid: Int
+        get() = sp.getInt("float_lock_uid", -1)
+        set(v) = sp.edit().putInt("float_lock_uid", v).apply()
+
+    /** 悬浮窗位置：0=左上 1=右上 2=左下 3=右下 */
+    var floatCorner: Int
+        get() = sp.getInt("float_corner", 0)
+        set(v) = sp.edit().putInt("float_corner", v).apply()
+
     var logEnabled: Boolean
         get() = sp.getBoolean(KEY_LOG, false)
         set(v) = sp.edit().putBoolean(KEY_LOG, v).apply()

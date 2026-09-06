@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">流量守卫 TV</string>
+    <string name="app_name">星河守卫</string>
 
     <!-- 主界面 -->
     <string name="title_apps">应用限速</string>
@@ -54,13 +54,14 @@
     <string name="set_about">关于</string>
 
     <!-- 通知 -->
-    <string name="notify_channel">流量守卫运行状态</string>
-    <string name="notify_title">流量守卫正在运行</string>
+    <string name="notify_channel">星河守卫运行状态</string>
+    <string name="notify_title">星河守卫正在运行</string>
     <string name="notify_text">上行 %1$s · 下行 %2$s · 限速应用 %3$d 个</string>
 
     <string name="vpn_prepare_title">需要授权 VPN 连接</string>
-    <string name="vpn_prepare_text">流量守卫需要用 VPN 方式接管盒子全部流量，才能按应用统计与限制上行速度。请在接下来的系统弹窗中点击「确定」。</string>
+    <string name="vpn_prepare_text">星河守卫需要用 VPN 方式接管盒子全部流量，才能按应用统计与限制上行速度。请在接下来的系统弹窗中点击「确定」。</string>
     <string name="root_unavailable">未获取到 Root 权限，已回退到免 Root 模式</string>
     <string name="toast_saved">已保存</string>
     <string name="unit_kbps">KB/s</string>
+    <string name="dlg_lock_float">锁定到桌面悬浮窗（实时显示该应用上下行速率）</string>
 </resources>

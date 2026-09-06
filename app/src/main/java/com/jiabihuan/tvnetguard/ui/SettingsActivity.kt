@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.EditText
@@ -21,7 +22,7 @@ import com.jiabihuan.tvnetguard.vpn.GuardVpnService
 import com.jiabihuan.tvnetguard.vpn.Limiter
 import com.jiabihuan.tvnetguard.vpn.RootEngineService
 
-/** 设置页：用代码构建，省掉一堆布局文件，改动也直观 */
+/** 设置页：用代码构建。针对遥控器做了焦点处理——每行单独可聚焦、有高亮背景。 */
 class SettingsActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,6 +67,13 @@ class SettingsActivity : Activity() {
             }
         })
 
+        root.addView(switchRow("桌面悬浮窗", "在桌面上常驻显示实时上下行速率", Prefs.floatWindow) {
+            Prefs.floatWindow = it
+            if (it) FloatWindowService.start(this) else FloatWindowService.stop(this)
+        })
+
+        root.addView(cornerRow())
+
         root.addView(switchRow(getString(R.string.set_log), "在 logcat 中输出限速细节（排障用）", Prefs.logEnabled) {
             Prefs.logEnabled = it
         })
@@ -87,6 +95,9 @@ class SettingsActivity : Activity() {
         root.addView(aboutView())
 
         setContentView(scroll)
+
+        // 让第一个可聚焦项拿到遥控器焦点（标题不可聚焦，所以取第二个子项）
+        root.getChildAt(1)?.requestFocus()
     }
 
     private fun titleView(text: String): TextView = TextView(this).apply {
@@ -96,7 +107,16 @@ class SettingsActivity : Activity() {
         setPadding(0, 8, 0, 24)
     }
 
+    private fun focusBg() = resources.getDrawable(R.drawable.bg_item, theme)
+
     private fun switchRow(title: String, desc: String, checked: Boolean, onChange: (Boolean) -> Unit): LinearLayout {
+        // Switch 先建好：行容器要在 apply 块里引用它
+        val sw = Switch(this).apply {
+            isChecked = checked
+            isFocusable = false   // 焦点交给整行，避免高亮跑到开关内部
+            isClickable = false
+            setOnCheckedChangeListener { _, v -> onChange(v) }
+        }
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(
@@ -105,6 +125,18 @@ class SettingsActivity : Activity() {
             )
             setPadding(20, 18, 20, 18)
             gravity = Gravity.CENTER_VERTICAL
+            isFocusable = true
+            isFocusableInTouchMode = true
+            background = focusBg()   // 获得焦点时显示蓝边高亮
+            setOnClickListener { sw.isChecked = !sw.isChecked }
+            setOnKeyListener { _, keyCode, event ->
+                if (event.action == KeyEvent.ACTION_DOWN &&
+                    (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER)
+                ) {
+                    sw.isChecked = !sw.isChecked
+                    true
+                } else false
+            }
         }
         val texts = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -122,11 +154,6 @@ class SettingsActivity : Activity() {
             setPadding(0, 4, 0, 0)
         })
         row.addView(texts)
-
-        val sw = Switch(this).apply {
-            isChecked = checked
-            setOnCheckedChangeListener { _, v -> onChange(v) }
-        }
         row.addView(sw)
         return row
     }
@@ -148,6 +175,7 @@ class SettingsActivity : Activity() {
             setTextColor(Color.WHITE)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 18f)
             setPadding(16, 12, 16, 12)
+            background = focusBg()
             setOnFocusChangeListener { _, hasFocus ->
                 if (!hasFocus) {
                     val raw = text.toString().trim()
@@ -183,6 +211,7 @@ class SettingsActivity : Activity() {
             val btn = Button(this).apply {
                 text = name
                 setPadding(24, 12, 24, 12)
+                background = focusBg()
                 setOnClickListener {
                     Prefs.mode = value
                     if (EngineState.running) {
@@ -205,13 +234,73 @@ class SettingsActivity : Activity() {
             val b = group.getChildAt(i) as Button
             val v = values.getOrElse(i) { 0 }
             val on = v == Prefs.mode
-            b.setBackgroundColor(if (on) resources.getColor(R.color.primary, theme) else resources.getColor(R.color.bg_card, theme))
+            b.text = if (on) "✔ ${nameOfValue(v)}" else nameOfValue(v)
             b.setTextColor(if (on) Color.BLACK else Color.WHITE)
         }
     }
 
+    private fun nameOfValue(v: Int): String = when (v) {
+        0 -> "自动"
+        1 -> "纯 Root"
+        else -> "免 Root VPN"
+    }
+
+    /** 悬浮窗位置：0=左上 1=右上 2=左下 3=右下 */
+    private fun cornerRow(): LinearLayout {
+        val wrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 18, 20, 18)
+        }
+        wrap.addView(TextView(this).apply {
+            text = "悬浮窗位置"
+            setTextColor(resources.getColor(R.color.text_primary, theme))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
+        })
+        wrap.addView(TextView(this).apply {
+            text = "改完 1 秒内自动挪过去，不用重启悬浮窗"
+            setTextColor(resources.getColor(R.color.text_secondary, theme))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(0, 4, 0, 10)
+        })
+        val group = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val labels = listOf("左上" to 0, "右上" to 1, "左下" to 2, "右下" to 3)
+        for ((name, value) in labels) {
+            val btn = Button(this).apply {
+                text = name
+                setPadding(24, 12, 24, 12)
+                background = focusBg()
+                setOnClickListener {
+                    Prefs.floatCorner = value
+                    updateCornerButtons(group)
+                }
+            }
+            group.addView(btn)
+        }
+        wrap.addView(group)
+        wrap.post { updateCornerButtons(group) }
+        return wrap
+    }
+
+    private fun updateCornerButtons(group: LinearLayout) {
+        val values = listOf(0, 1, 2, 3)
+        for (i in 0 until group.childCount) {
+            val b = group.getChildAt(i) as Button
+            val v = values.getOrElse(i) { 0 }
+            val on = v == Prefs.floatCorner
+            b.text = if (on) "✔ ${cornerName(v)}" else cornerName(v)
+            b.setTextColor(if (on) Color.BLACK else Color.WHITE)
+        }
+    }
+
+    private fun cornerName(v: Int): String = when (v) {
+        0 -> "左上"
+        1 -> "右上"
+        2 -> "左下"
+        else -> "右下"
+    }
+
     private fun aboutView(): TextView = TextView(this).apply {
-        text = "流量守卫 TV v1.0.0\n免 root 方案基于 VpnService 用户态转发 + 令牌桶限速；" +
+        text = "星河守卫 TV v1.0.0\n免 root 方案基于 VpnService 用户态转发 + 令牌桶限速；" +
             "root 加固基于 iptables owner 匹配。\n项目地址：github.com/jiabihuan/TVBoxNetGuard"
         setTextColor(resources.getColor(R.color.text_secondary, theme))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)

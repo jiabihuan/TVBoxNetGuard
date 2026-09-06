@@ -46,7 +46,13 @@ object RootStats {
         return if (map.isEmpty()) null else map
     }
 
+    // iptables 统计需要 su，按 5 秒缓存，避免每秒弹一次 root 授权
+    private var lastIptSampleAt = 0L
+    private var cachedIpt: Map<Int, Pair<Long, Long>>? = null
+
     private fun iptablesStat(): Map<Int, Pair<Long, Long>>? {
+        val now = System.currentTimeMillis()
+        if (cachedIpt != null && now - lastIptSampleAt < 5000) return cachedIpt
         if (!RootShell.hasRoot()) return null
         val r = RootShell.run(listOf("iptables -t mangle -L $STAT_CHAIN -v -x -n 2>/dev/null"))
         if (!r.ok) return null
@@ -59,6 +65,8 @@ object RootStats {
             val uid = line.substringAfter("owner UID match ").trim().toIntOrNull() ?: return@forEach
             if (uid >= 0) map[uid] = (0L to bytes)
         }
-        return if (map.isEmpty()) null else map
+        cachedIpt = if (map.isEmpty()) null else map
+        lastIptSampleAt = now
+        return cachedIpt
     }
 }

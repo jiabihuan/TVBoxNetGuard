@@ -67,4 +67,22 @@ object AppLoader {
             false
         }
     }
+
+    /** 根据 uid 反查应用显示名（用于悬浮窗锁定显示） */
+    fun nameOf(context: Context, uid: Int): String? {
+        return try {
+            val pm = context.packageManager
+            val pkgs = pm.getPackagesForUid(uid) ?: return null
+            for (p in pkgs) {
+                try {
+                    return pm.getApplicationLabel(pm.getApplicationInfo(p, 0)).toString()
+                } catch (t: Throwable) {
+                    // 继续尝试下一个
+                }
+            }
+            pkgs.firstOrNull()
+        } catch (t: Throwable) {
+            null
+        }
+    }
 }

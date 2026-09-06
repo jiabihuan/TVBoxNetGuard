@@ -1,12 +1,19 @@
-# 流量守卫 TV（TVBoxNetGuard）
+# 星河守卫（TVBoxNetGuard）
 
-给 **Android 电视 / 电视盒子** 用的流量监控与 **按应用上行限速** 工具。
+给 **Android 电视 / 电视盒子** 用的流量监控与 **按应用上行限速** 工具，全程遥控器可操作。
 
 核心诉求只有两个，但都做到很硬：
 
 1. 实时看到整机、以及每个 App 的**上行 / 下行速率与累计流量**；
 2. 给**指定 App** 设一个上行速度上限，或者干脆让它一个字节都传不出去 ——
    上限按 IP 层实际字节算（含包头），标 10 KB/s 线路上就不会超过 10 KB/s。
+
+另外附赠两件电视上很实用的小东西：
+
+3. **桌面悬浮窗**：在电视桌面上常驻一个小窗，每秒刷新上行 / 下行速率；
+   可以在应用限速弹窗里把某个 App「锁定到悬浮窗」，只盯它的速率；
+   位置四选一：**左上 / 右上 / 左下 / 右下**，改完 1 秒内生效；
+4. **纯 Root 模式**：不开 VPN，直接在内核层限速 + 统计，更稳更省电（详见下文）。
 
 > 典型场景：盒子上的某个 App 在后台疯狂上传（P2P、日志上报、投屏/远程协助类应用），
 > 把整条宽带的上行塞满，导致家里其他设备网络卡顿。装上它，把那个 App 的上行摁到 10 KB/s 或直接掐断。
@@ -109,15 +116,21 @@ adb install -f app/build/outputs/apk/debug/app-debug.apk
 
 ### 使用
 
-1. 打开应用，点 **启动限速引擎**，在系统弹窗里点确定授权 VPN；
+1. 打开应用，点 **启动**。有 root 的盒子会直接走「纯 Root 内核」模式（首次会弹一次
+   root 授权，之后不再反复请求）；无 root 或手动选了「免 Root VPN」模式时，在系统弹窗里
+   点确定授权 VPN；
 2. 进入 **应用限速设置**，选中目标 App；
 3. 填上行上限（KB/s），或用预设：**不限 / 10 KB/s / 50 KB/s / 彻底禁止**；
+   顺手可以勾上「锁定到悬浮窗」；
 4. 保存后 **1 秒内热生效**，不用重启引擎，已有连接也会被立即掐断重连。
 
-设置项说明：
+设置项说明（每一行都能用遥控器焦点直接操作，聚焦项有高亮边框）：
 
 | 设置 | 说明 |
 | --- | --- |
+| 工作模式 | 自动 / 纯 Root / 免 Root VPN |
+| 桌面悬浮窗 | 在桌面上常驻速率小窗 |
+| 悬浮窗位置 | 左上 / 右上 / 左下 / 右下 |
 | 开机自动启动 | 盒子重启后自动接管流量 |
 | 看门狗 | 服务被系统或清理软件杀掉后 60 秒内自动拉起 |
 | 全局严格模式 | 所有超限流量一律丢包 |
@@ -159,7 +172,10 @@ adb install -f app/build/outputs/apk/debug/app-debug.apk
 ```
 app/src/main/java/com/jiabihuan/tvnetguard/
 ├── vpn/
-│   ├── GuardVpnService.kt   主引擎：建 tun、读包分发、定时同步规则与通知
+│   ├── GuardVpnService.kt   免 Root 主引擎：建 tun、读包分发、定时同步规则与通知
+│   ├── RootEngineService.kt 纯 Root 引擎（不开 VPN）：采样 + 内核规则维护
+│   ├── RootBackend.kt       内核限速：tc+htb 优先，iptables owner+limit 兜底
+│   ├── RootStats.kt         qtaguid / iptables 统计采样
 │   ├── SessionManager.kt    会话表（五元组 -> 连接）与过期回收
 │   ├── TcpSession.kt        用户态 TCP 中转：seq/ack 重写、背压、限速、FIN 处理
 │   ├── UdpSession.kt        用户态 UDP NAT
@@ -167,10 +183,9 @@ app/src/main/java/com/jiabihuan/tvnetguard/
 │   ├── TokenBucket.kt       令牌桶（阻塞排队 / 非阻塞丢弃两种语义）
 │   ├── Limiter.kt           按 uid 管理令牌桶 + 全局限速 + 规则热更新
 │   ├── UidResolver.kt       连接归属 uid（API29+ /proc/net 双路径）
-│   ├── RootFirewall.kt      iptables 加固引擎
 │   └── Executors.kt         线程池与串行执行器
 ├── data/                    规则、统计、应用列表
-├── ui/                      TV 遥控器友好的三个界面
+├── ui/                      TV 遥控器友好的界面（主界面 / 设置 / 应用限速 / 桌面悬浮窗）
 └── util/                    配置、格式化、root shell
 ```
 

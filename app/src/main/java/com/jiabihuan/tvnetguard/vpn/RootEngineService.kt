@@ -68,7 +68,7 @@ class RootEngineService : Service() {
     private fun startEngine() {
         if (!RootShell.hasRoot()) {
             EngineState.setStopped()
-            EngineState.note(EngineState.NONE, "未获取到 root 权限，请在设置里改用「免 Root VPN」模式")
+            EngineState.note("未获取到 root 权限，请在设置里改用「免 Root VPN」模式")
             stopSelf()
             return
         }
@@ -130,7 +130,7 @@ class RootEngineService : Service() {
             Notification.Builder(this)
         }
         return b
-            .setContentTitle("流量守卫（纯 Root 模式）")
+            .setContentTitle("星河守卫（纯 Root 模式）")
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_launcher)
             .setContentIntent(pi)

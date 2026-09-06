@@ -143,6 +143,16 @@
             android:textColor="@color/text_primary"
             android:textSize="17sp" />
 
+        <CheckBox
+            android:id="@+id/cb_lock"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:buttonTint="@color/accent"
+            android:text="@string/dlg_lock_float"
+            android:textColor="@color/text_primary"
+            android:textSize="17sp" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

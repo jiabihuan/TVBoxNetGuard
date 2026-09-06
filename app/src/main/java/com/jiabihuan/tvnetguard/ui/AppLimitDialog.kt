@@ -10,6 +10,7 @@ import android.widget.TextView
 import android.widget.Toast
 import com.jiabihuan.tvnetguard.R
 import com.jiabihuan.tvnetguard.data.AppEntry
+import com.jiabihuan.tvnetguard.util.Prefs
 import com.jiabihuan.tvnetguard.data.AppRule
 import com.jiabihuan.tvnetguard.data.RuleStore
 import com.jiabihuan.tvnetguard.vpn.Limiter
@@ -28,6 +29,7 @@ object AppLimitDialog {
         val etDown = dialog.findViewById<EditText>(R.id.et_down)
         val cbStrict = dialog.findViewById<CheckBox>(R.id.cb_strict)
         val cbBlock = dialog.findViewById<CheckBox>(R.id.cb_block_all)
+        val cbLock = dialog.findViewById<CheckBox>(R.id.cb_lock)
 
         title.text = entry.name
         subtitle.text = entry.packageName
@@ -37,6 +39,7 @@ object AppLimitDialog {
         etDown.setText(if (rule.downKbps > 0) rule.downKbps.toString() else "")
         cbStrict.isChecked = rule.strict
         cbBlock.isChecked = rule.blocked
+        cbLock.isChecked = Prefs.floatLockUid == entry.uid
 
         fun setPreset(up: Int) {
             etUp.setText(if (up > 0) up.toString() else "")
@@ -58,6 +61,12 @@ object AppLimitDialog {
                 blocked = cbBlock.isChecked
             )
             RuleStore.put(saved)
+            // 悬浮窗锁定：勾选则锁定本应用，再勾则解除（仅当当前就是它才清）
+            Prefs.floatLockUid = when {
+                cbLock.isChecked -> entry.uid
+                Prefs.floatLockUid == entry.uid -> -1
+                else -> Prefs.floatLockUid
+            }
             // 引擎每秒会同步一次规则，这里主动刷一下，让设置"立刻"生效
             Limiter.refresh()
             Toast.makeText(activity, R.string.toast_saved, Toast.LENGTH_SHORT).show()

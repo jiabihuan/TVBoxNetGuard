@@ -23,6 +23,10 @@ object EngineState {
     var lastError: String? = null
         private set
 
+    /** root 是否可用（进入界面时探测一次，避免每秒拉起 su 弹窗） */
+    @Volatile
+    var rootAvailable = false
+
     @Volatile
     var sessionCount = 0
         private set
@@ -40,7 +44,7 @@ object EngineState {
         sessionCount = 0
     }
 
-    fun note(kind: Int, error: String?) {
+    fun note(error: String?) {
         if (error != null) lastError = error
     }
 

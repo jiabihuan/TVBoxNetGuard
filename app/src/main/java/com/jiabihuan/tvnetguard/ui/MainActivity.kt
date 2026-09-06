@@ -71,6 +71,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // 进入界面只探测一次 root，刷新时复用结果，避免每秒拉起 su 弹授权
+        EngineState.rootAvailable = RootShell.hasRoot()
         refreshing = true
         handler.post(ticker)
     }
@@ -90,7 +92,7 @@ class MainActivity : Activity() {
             MODE_VPN -> prepareThenStartVpn()
             MODE_ROOT -> startRoot()
             else -> {
-                if (RootShell.hasRoot()) startRoot() else prepareThenStartVpn()
+                if (EngineState.rootAvailable) startRoot() else prepareThenStartVpn()
             }
         }
         handler.postDelayed({ refresh() }, 500)
@@ -150,7 +152,7 @@ class MainActivity : Activity() {
         val modeLabel = when (Prefs.mode) {
             MODE_ROOT -> getString(R.string.mode_root)
             MODE_VPN -> getString(R.string.mode_vpn)
-            else -> if (RootShell.hasRoot()) "自动（将用 Root）" else "自动（将用 VPN）"
+            else -> if (EngineState.rootAvailable) "自动（将用 Root）" else "自动（将用 VPN）"
         }
         tvMode.text = "${getString(R.string.label_mode)}：$modeLabel"
         tvSessions.text = "${getString(R.string.label_session_count)}：${EngineState.sessionCount}"

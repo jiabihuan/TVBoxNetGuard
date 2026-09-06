@@ -42,12 +42,32 @@ object StatsStore {
      * root 模式专用：qtaguid / iptables 给出的是**绝对累计值**，
      * 直接覆盖，tick() 会基于相邻两次快照的差值算出实时速率（与 addTx 增量模型可互换，
      * 但切换模式前务必 [reset]，避免两类数据叠加）。
+     * Pair 语义与 RootStats 约定一致：**first = 下行(rx)累计，second = 上行(tx)累计**。
      */
     fun setSnapshot(snapshot: Map<Int, Pair<Long, Long>>) {
         for ((uid, pr) in snapshot) {
-            tx.getOrPut(uid) { AtomicLong(0) }.set(pr.first)
-            rx.getOrPut(uid) { AtomicLong(0) }.set(pr.second)
+            rx.getOrPut(uid) { AtomicLong(0) }.set(pr.first)
+            tx.getOrPut(uid) { AtomicLong(0) }.set(pr.second)
         }
+    }
+
+    // 整机绝对累计（root 模式来自 TrafficStats）：>= 0 表示有效
+    @Volatile
+    private var snapRx = -1L
+    @Volatile
+    private var snapTx = -1L
+    @Volatile
+    private var lastSnapRx = -1L
+    @Volatile
+    private var lastSnapTx = -1L
+
+    /**
+     * 整机速率专用通道：直接喂 TrafficStats.getTotalRx/TxBytes() 这类**系统级绝对累计值**，
+     * 不依赖按-uid 数据是否齐全，root 模式下整机上下行也因此永远准确。
+     */
+    fun setGlobalSnapshot(rxTotal: Long, txTotal: Long) {
+        snapRx = rxTotal
+        snapTx = txTotal
     }
 
     fun totalTx(uid: Int): Long = tx[uid]?.get() ?: 0L
@@ -87,13 +107,28 @@ object StatsStore {
             lastRx[uid] = curRx
         }
 
-        var grTx = ((gTx - lastGlobalTx) * factor).toLong()
-        var grRx = ((gRx - lastGlobalRx) * factor).toLong()
-        if (grTx < 0) grTx = 0
-        if (grRx < 0) grRx = 0
-        globalTxRate = (globalTxRate * 0.4 + grTx * 0.6).toLong()
-        globalRxRate = (globalRxRate * 0.4 + grRx * 0.6).toLong()
-
+        val srx = snapRx
+        val stx = snapTx
+        if (srx >= 0 && lastSnapRx >= 0) {
+            // root 模式：整机速率来自系统级绝对累计（TrafficStats）差分，最准
+            var grTx = ((stx - lastSnapTx) * factor).toLong()
+            var grRx = ((srx - lastSnapRx) * factor).toLong()
+            if (grTx < 0) grTx = 0
+            if (grRx < 0) grRx = 0
+            globalTxRate = (globalTxRate * 0.4 + grTx * 0.6).toLong()
+            globalRxRate = (globalRxRate * 0.4 + grRx * 0.6).toLong()
+        } else if (srx < 0) {
+            // VPN 模式（无整机快照）：整机 = 所有 uid 之和
+            var grTx = ((gTx - lastGlobalTx) * factor).toLong()
+            var grRx = ((gRx - lastGlobalRx) * factor).toLong()
+            if (grTx < 0) grTx = 0
+            if (grRx < 0) grRx = 0
+            globalTxRate = (globalTxRate * 0.4 + grTx * 0.6).toLong()
+            globalRxRate = (globalRxRate * 0.4 + grRx * 0.6).toLong()
+        }
+        // srx >= 0 但 lastSnapRx < 0：第一拍，只建立基线，速率保持 0
+        lastSnapRx = srx
+        lastSnapTx = stx
         lastGlobalTx = gTx
         lastGlobalRx = gRx
         lastSampleAt = now
@@ -104,6 +139,8 @@ object StatsStore {
         lastTx.clear(); lastRx.clear()
         lastGlobalTx = 0; lastGlobalRx = 0
         globalTxRate = 0; globalRxRate = 0
+        snapRx = -1; snapTx = -1
+        lastSnapRx = -1; lastSnapTx = -1
         lastSampleAt = System.currentTimeMillis()
     }
 }

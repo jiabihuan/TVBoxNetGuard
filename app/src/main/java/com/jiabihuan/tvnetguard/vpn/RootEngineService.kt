@@ -5,6 +5,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.TrafficStats
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -91,9 +92,16 @@ class RootEngineService : Service() {
         scheduler?.scheduleAtFixedRate({
             if (EngineState.kind != EngineState.ROOT) return@scheduleAtFixedRate
             try {
-                StatsStore.tick()
-                // 从内核读取绝对累计值，交给 StatsStore 算速率
+                // 整机速率：TrafficStats 系统级绝对累计，无需 root、不受 SELinux 限制，
+                // 按-uid 数据再怎么缺，整机上下行也永远是准的
+                StatsStore.setGlobalSnapshot(
+                    TrafficStats.getTotalRxBytes().coerceAtLeast(0),
+                    TrafficStats.getTotalTxBytes().coerceAtLeast(0)
+                )
+                // 按-uid 绝对累计（qtaguid，root 读；兜底 iptables 仅上行）
                 StatsStore.setSnapshot(RootStats.sample())
+                // 基于相邻两次快照的差值算速率
+                StatsStore.tick()
 
                 if (lastRuleVersion != RuleStore.version) {
                     lastRuleVersion = RuleStore.version
@@ -144,6 +152,7 @@ class RootEngineService : Service() {
         scheduler?.shutdownNow()
         scheduler = null
         RootBackend.clear()
+        RootShell.closeSession() // 释放常驻 su 会话
         StatsStore.reset()
         VpnLog.d("root engine stopped")
     }

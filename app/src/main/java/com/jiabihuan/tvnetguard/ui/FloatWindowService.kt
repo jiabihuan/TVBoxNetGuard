@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
@@ -92,9 +93,13 @@ class FloatWindowService : Service() {
         view = TextView(this).apply {
             text = "加载中…"
             setTextColor(Color.WHITE)
-            textSize = 14f
-            setPadding(18, 10, 18, 10)
-            background = resources.getDrawable(R.drawable.bg_item, theme)
+            textSize = 13f
+            setTypeface(Typeface.DEFAULT_BOLD)
+            // 全透明：不画任何底色，白字 + 黑色柔和阴影，横排一行不挡桌面
+            background = null
+            setShadowLayer(6f, 0f, 2f, 0xAA000000.toInt())
+            includeFontPadding = false
+            setPadding(10, 4, 10, 4)
         }
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -125,11 +130,12 @@ class FloatWindowService : Service() {
         applyCorner()
         StatsStore.tick()
         val lock = Prefs.floatLockUid
+        // 单行横排：上行 下行 来源（整机或锁定的 App）
         v.text = if (lock >= 0) {
             val name = AppLoader.nameOf(this, lock) ?: "uid $lock"
-            "↑ ${Format.speed(StatsStore.txRateOf(lock))}\n↓ ${Format.speed(StatsStore.rxRateOf(lock))}\n$name"
+            "↑ ${Format.speed(StatsStore.txRateOf(lock))}  ↓ ${Format.speed(StatsStore.rxRateOf(lock))}  $name"
         } else {
-            "↑ ${Format.speed(StatsStore.globalTxRate)}\n↓ ${Format.speed(StatsStore.globalRxRate)}\n整机"
+            "↑ ${Format.speed(StatsStore.globalTxRate)}  ↓ ${Format.speed(StatsStore.globalRxRate)}  整机"
         }
     }
 

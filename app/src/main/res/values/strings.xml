@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">流量守卫 TV</string>
+
+    <!-- 主界面 -->
+    <string name="title_apps">应用限速</string>
+    <string name="title_settings">设置</string>
+    <string name="engine_stopped">引擎未运行</string>
+    <string name="engine_running">引擎运行中</string>
+    <string name="btn_start">启动限速引擎</string>
+    <string name="btn_stop">停止引擎</string>
+    <string name="btn_apps">应用限速设置</string>
+    <string name="btn_settings">设置</string>
+    <string name="label_total_up">总上行</string>
+    <string name="label_total_down">总下行</string>
+    <string name="label_up_speed">上行速率</string>
+    <string name="label_down_speed">下行速率</string>
+    <string name="label_session_count">活跃连接</string>
+    <string name="label_mode">工作模式</string>
+    <string name="mode_vpn">免 Root（VPN 接管）</string>
+    <string name="mode_root">Root（iptables 内核级）</string>
+    <string name="mode_vpn_root">免 Root + Root 加固</string>
+
+    <!-- 应用列表 -->
+    <string name="apps_hint">选中应用后按 OK 键设置上行限速</string>
+    <string name="apps_sort_traffic">按流量排序</string>
+    <string name="apps_sort_name">按名称排序</string>
+    <string name="apps_show_system">显示系统应用</string>
+    <string name="limit_unset">未限速</string>
+    <string name="limit_blocked">已完全禁止上行</string>
+    <string name="limit_value">上行 %1$s</string>
+
+    <!-- 限速对话框 -->
+    <string name="dlg_limit_title">上行限速设置</string>
+    <string name="dlg_limit_preset">快捷预设</string>
+    <string name="dlg_preset_off">不限速</string>
+    <string name="dlg_preset_block">彻底禁止</string>
+    <string name="dlg_limit_hint">单位 KB/s，0 表示完全禁止该应用上传数据</string>
+    <string name="dlg_strict_mode">严格模式（超限直接丢包，不排队）</string>
+    <string name="dlg_strict_hint">开启后超出配额的上行数据包会被立刻丢弃，绝不允许突发；关闭时采用延迟排队，速率更平滑但对实时流量更友好。</string>
+    <string name="dlg_block_all">同时禁止该应用联网（上下行全断）</string>
+    <string name="dlg_down_limit">下行限速（KB/s，0 为不限）</string>
+    <string name="btn_cancel">取消</string>
+    <string name="btn_save">保存</string>
+
+    <!-- 设置 -->
+    <string name="set_autostart">开机自动启动引擎</string>
+    <string name="set_watchdog">看门狗（被杀后自动拉起）</string>
+    <string name="set_global_up">全局上行限速（KB/s，0 为不限）</string>
+    <string name="set_strict_global">全局严格模式</string>
+    <string name="set_root">启用 Root 加固（iptables 硬丢弃）</string>
+    <string name="set_log">记录限速日志</string>
+    <string name="set_mtu">VPN MTU</string>
+    <string name="set_about">关于</string>
+
+    <!-- 通知 -->
+    <string name="notify_channel">流量守卫运行状态</string>
+    <string name="notify_title">流量守卫正在运行</string>
+    <string name="notify_text">上行 %1$s · 下行 %2$s · 限速应用 %3$d 个</string>
+
+    <string name="vpn_prepare_title">需要授权 VPN 连接</string>
+    <string name="vpn_prepare_text">流量守卫需要用 VPN 方式接管盒子全部流量，才能按应用统计与限制上行速度。请在接下来的系统弹窗中点击「确定」。</string>
+    <string name="root_unavailable">未获取到 Root 权限，已回退到免 Root 模式</string>
+    <string name="toast_saved">已保存</string>
+    <string name="unit_kbps">KB/s</string>
+</resources>

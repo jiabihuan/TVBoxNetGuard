@@ -66,6 +66,10 @@ class MainActivity : Activity() {
         findViewById<Button>(R.id.btn_settings).setOnClickListener {
             startActivity(Intent(this, SettingsActivity::class.java))
         }
+        // 点击上行 / 下行速率卡片，进入流量详情（按应用排行）
+        val toTraffic = View.OnClickListener { startActivity(Intent(this, TrafficActivity::class.java)) }
+        findViewById<View>(R.id.card_up).setOnClickListener(toTraffic)
+        findViewById<View>(R.id.card_down).setOnClickListener(toTraffic)
         btnToggle.requestFocus()
     }
 

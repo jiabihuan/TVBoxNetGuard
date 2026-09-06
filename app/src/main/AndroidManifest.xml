@@ -59,6 +59,12 @@
             android:screenOrientation="landscape" />
 
         <activity
+            android:name=".ui.TrafficActivity"
+            android:exported="false"
+            android:label="@string/title_traffic"
+            android:screenOrientation="landscape" />
+
+        <activity
             android:name=".ui.SettingsActivity"
             android:exported="false"
             android:label="@string/title_settings"

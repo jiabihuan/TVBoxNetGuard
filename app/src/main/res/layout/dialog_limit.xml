@@ -94,27 +94,6 @@
             android:textColorHint="@color/text_secondary"
             android:textSize="18sp" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:text="@string/dlg_down_limit"
-            android:textColor="@color/text_secondary"
-            android:textSize="15sp" />
-
-        <EditText
-            android:id="@+id/et_down"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:background="@drawable/bg_card"
-            android:hint="0"
-            android:inputType="number"
-            android:padding="14dp"
-            android:textColor="@color/text_primary"
-            android:textColorHint="@color/text_secondary"
-            android:textSize="18sp" />
-
         <CheckBox
             android:id="@+id/cb_strict"
             android:layout_width="match_parent"

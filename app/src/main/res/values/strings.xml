@@ -39,7 +39,6 @@
     <string name="dlg_strict_mode">严格模式（超限直接丢包，不排队）</string>
     <string name="dlg_strict_hint">开启后超出配额的上行数据包会被立刻丢弃，绝不允许突发；关闭时采用延迟排队，速率更平滑但对实时流量更友好。</string>
     <string name="dlg_block_all">同时禁止该应用联网（上下行全断）</string>
-    <string name="dlg_down_limit">下行限速（KB/s，0 为不限）</string>
     <string name="btn_cancel">取消</string>
     <string name="btn_save">保存</string>
 

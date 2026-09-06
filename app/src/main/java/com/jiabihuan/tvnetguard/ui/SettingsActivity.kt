@@ -300,8 +300,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun aboutView(): TextView = TextView(this).apply {
-        text = "星河守卫 TV v1.0.0\n免 root 方案基于 VpnService 用户态转发 + 令牌桶限速；" +
-            "root 加固基于 iptables owner 匹配。\n项目地址：github.com/jiabihuan/TVBoxNetGuard"
+        text = "星河守卫 TV v1.1.0"
         setTextColor(resources.getColor(R.color.text_secondary, theme))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         setPadding(20, 32, 20, 20)

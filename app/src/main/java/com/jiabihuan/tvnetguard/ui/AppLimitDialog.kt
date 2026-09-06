@@ -26,7 +26,6 @@ object AppLimitDialog {
         val title = dialog.findViewById<TextView>(R.id.tv_title)
         val subtitle = dialog.findViewById<TextView>(R.id.tv_subtitle)
         val etUp = dialog.findViewById<EditText>(R.id.et_up)
-        val etDown = dialog.findViewById<EditText>(R.id.et_down)
         val cbStrict = dialog.findViewById<CheckBox>(R.id.cb_strict)
         val cbBlock = dialog.findViewById<CheckBox>(R.id.cb_block_all)
         val cbLock = dialog.findViewById<CheckBox>(R.id.cb_lock)
@@ -36,7 +35,6 @@ object AppLimitDialog {
 
         val rule = RuleStore.get(entry.uid)
         etUp.setText(if (rule.upKbps > 0) rule.upKbps.toString() else "")
-        etDown.setText(if (rule.downKbps > 0) rule.downKbps.toString() else "")
         cbStrict.isChecked = rule.strict
         cbBlock.isChecked = rule.blocked
         cbLock.isChecked = Prefs.floatLockUid == entry.uid
@@ -52,11 +50,11 @@ object AppLimitDialog {
         dialog.findViewById<Button>(R.id.btn_cancel).setOnClickListener { dialog.dismiss() }
         dialog.findViewById<Button>(R.id.btn_save).setOnClickListener {
             val up = parseLimit(etUp.text.toString())
-            val down = parseLimit(etDown.text.toString())
+            // 电视端只保留上行限速；下行不做（纯内核无法按 uid 限下行，UI 已移除）
             val saved = AppRule(
                 uid = entry.uid,
                 upKbps = up,
-                downKbps = down,
+                downKbps = -1,
                 strict = cbStrict.isChecked,
                 blocked = cbBlock.isChecked
             )

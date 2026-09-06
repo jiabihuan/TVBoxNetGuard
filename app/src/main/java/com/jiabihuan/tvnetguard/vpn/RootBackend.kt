@@ -1,27 +1,33 @@
 package com.jiabihuan.tvnetguard.vpn
 
+import com.jiabihuan.tvnetguard.data.AppRule
 import com.jiabihuan.tvnetguard.data.RuleStore
-import com.jiabihuan.tvnetguard.util.Prefs
 import com.jiabihuan.tvnetguard.util.RootShell
 import kotlin.math.max
 
 /**
  * 纯内核限速后端。**完全不依赖 VPN**，盒子拿到 root 即可使用。
  *
+ * 规则同时下发到 **IPv4（iptables）与 IPv6（ip6tables）**，TCP / UDP 全覆盖，
+ * 不给 PCDN 之类的应用留绕过路径（之前只下发 IPv4 是实测"限不住"的主因）。
+ *
  * 两条内核路径，自动挑选可用的：
  * 1. `tc + htb + CLASSIFY`（字节级，最理想）—— 需要内核带 `sch_htb` 与 `xt_CLASSIFY`，
- *    且系统里有 `tc` 二进制（常见于有 root 的定制盒子）。
- * 2. `iptables owner + limit`（按包计数，按 1500 字节满包折算成 pps）——
+ *    且系统里有 `tc` 二进制（常见于有 root 的定制盒子）。IPv6 的包由 ip6tables mangle
+ *    里同样的 CLASSIFY 规则送进同一批 htb class。
+ * 2. `iptables/ip6tables owner + limit`（按包计数，按 1500 字节满包折算成 pps）——
  *    Android 盒子内核几乎都带 `xt_owner`，是兜底方案。
  *
- * 统计不在这里做，由 [RootStats] 从 `qtaguid` 读取（同样不需要 VPN）。
+ * 统计不在这里做，由 [RootStats] 从 `qtaguid` 读取；iptables 统计链挂在
+ * **POSTROUTING**（丢包之后），计数口径就是"实际出了网卡的量"。
  *
  * 限速行为：
- * - 限速：超出配额**丢包**（让 TCP 自己降速），绝不重置连接；
- * - 彻底断网 / 上行=0：直接 DROP / REJECT，连门都不给开。
+ * - 限速：超出配额**丢包 / 整形**（TCP 自己降速，UDP 的超额部分被直接压掉）；
+ * - 彻底断网：TCP 用 REJECT(tcp-reset) 快速断开，其余（UDP 等）一律 DROP。
  */
 object RootBackend {
 
+    // ip6tables 与 iptables 的链空间相互独立，同名不冲突，清理时两边各清一遍
     private const val OUT_CHAIN = "tng_out"
     private const val MANGLE_CHAIN = "tng_mangle"
     private const val STAT_CHAIN = RootStats.STAT_CHAIN
@@ -54,12 +60,13 @@ object RootBackend {
             return true
         }
 
-        if (applyWithTc(rules)) {
+        val hasV6 = hasIp6tables()
+        if (applyWithTc(rules, hasV6)) {
             method = "tc"
             active = true
             return true
         }
-        if (applyWithIptables(rules)) {
+        if (applyWithIptables(rules, hasV6)) {
             method = "iptables"
             active = true
             return true
@@ -69,97 +76,207 @@ object RootBackend {
         return false
     }
 
-    private fun applyWithTc(rules: List<com.jiabihuan.tvnetguard.data.AppRule>): Boolean {
-        val wan = findWan() ?: return false
-        if (findTc() == null) return false
-
-        val cmds = ArrayList<String>()
-        cmds += "tc qdisc del dev $wan root 2>/dev/null"
-        // mangle 链：分类 + 统计 + 断网
-        cmds += "iptables -t mangle -F $MANGLE_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -X $MANGLE_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -F $STAT_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -X $STAT_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -N $MANGLE_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -N $STAT_CHAIN 2>/dev/null"
-
-        cmds += "tc qdisc add dev $wan root handle 1: htb default 9999 2>/dev/null"
-        cmds += "tc class add dev $wan parent 1: classid 1:1 htb rate 1000mbit 2>/dev/null"
-
-        var idx = 10
-        for (rule in rules) {
-            val uid = rule.uid
-            if (rule.blocked || rule.upKbps == 0) {
-                cmds += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j DROP"
-                continue
-            }
-            val rate = rule.upKbps
-            cmds += "tc class add dev $wan parent 1:1 classid 1:$idx htb rate ${rate}kbit ceil ${rate}kbit"
-            cmds += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j CLASSIFY --set-class 1:$idx"
-            cmds += "iptables -t mangle -A $STAT_CHAIN -m owner --uid-owner $uid -j RETURN"
-            idx++
-        }
-        cmds += "iptables -t mangle -A $MANGLE_CHAIN -j RETURN"
-        cmds += "iptables -t mangle -A $STAT_CHAIN -j RETURN"
-        cmds += "iptables -t mangle -I OUTPUT -j $STAT_CHAIN"
-        cmds += "iptables -t mangle -I OUTPUT -j $MANGLE_CHAIN"
-
-        val r = RootShell.run(cmds, timeoutSec = 25)
-        val ok = !r.out.contains("RTNETLINK answers: Operation not supported") && !r.out.contains("No chain/target/match")
-        lastMessage = if (ok) "tc+htb 字节级限速已生效（${rules.size} 个应用）" else "tc 不可用：${r.out.take(160)}"
-        return ok
+    private fun hasIp6tables(): Boolean {
+        val r = RootShell.run(listOf("which ip6tables 2>/dev/null; ls /system/bin/ip6tables /system/xbin/ip6tables 2>/dev/null"))
+        return r.out.isNotBlank()
     }
 
-    private fun applyWithIptables(rules: List<com.jiabihuan.tvnetguard.data.AppRule>): Boolean {
-        val cmds = ArrayList<String>()
-        cmds += "iptables -D OUTPUT -j $OUT_CHAIN 2>/dev/null"
-        cmds += "iptables -F $OUT_CHAIN 2>/dev/null"
-        cmds += "iptables -X $OUT_CHAIN 2>/dev/null"
-        cmds += "iptables -N $OUT_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -F $STAT_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -X $STAT_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -N $STAT_CHAIN 2>/dev/null"
+    /** tc 路径下，每个被限速 App 的 class 编号要跨 tc/IPv4/IPv6 三处保持一致 */
+    private class ClassIds(rules: List<AppRule>) {
+        private val map = HashMap<Int, Int>()
 
+        init {
+            var idx = 10
+            for (r in rules) {
+                if (!r.blocked && r.upKbps > 0) map[r.uid] = idx++
+            }
+        }
+
+        fun of(uid: Int): Int? = map[uid]
+    }
+
+    private fun applyWithTc(rules: List<AppRule>, hasV6: Boolean): Boolean {
+        val wan = findWan() ?: return false
+        if (findTc() == null) return false
+        val ids = ClassIds(rules)
+
+        // 1) tc 整形骨架：每 App 一个 class；default class 必须存在，
+        //    否则未分类流量的行为不可控（可能直通）
+        val tcCmds = ArrayList<String>()
+        tcCmds += "tc qdisc del dev $wan root 2>/dev/null"
+        tcCmds += "tc qdisc add dev $wan root handle 1: htb default 9999"
+        tcCmds += "tc class add dev $wan parent 1: classid 1:1 htb rate 1000mbit ceil 1000mbit"
+        tcCmds += "tc class add dev $wan parent 1: classid 1:9999 htb rate 1000mbit ceil 1000mbit"
+        for (rule in rules) {
+            val id = ids.of(rule.uid) ?: continue
+            tcCmds += "tc class add dev $wan parent 1:1 classid 1:$id htb rate ${rule.upKbps}kbit ceil ${rule.upKbps}kbit"
+        }
+        val r1 = RootShell.run(tcCmds, timeoutSec = 20)
+        val tcOk = !r1.out.contains("RTNETLINK answers") &&
+            !r1.out.contains("Cannot find device") &&
+            !r1.out.contains("No such file or directory")
+        if (!tcOk) {
+            lastMessage = "tc 不可用：${r1.out.take(160)}"
+            return false
+        }
+
+        // 2) IPv4 mangle：分类 / 断网 / 统计
+        val v4 = ArrayList<String>()
+        v4 += "iptables -t mangle -F $MANGLE_CHAIN 2>/dev/null"
+        v4 += "iptables -t mangle -X $MANGLE_CHAIN 2>/dev/null"
+        v4 += "iptables -t mangle -N $MANGLE_CHAIN 2>/dev/null"
+        v4 += "iptables -t mangle -F $STAT_CHAIN 2>/dev/null"
+        v4 += "iptables -t mangle -X $STAT_CHAIN 2>/dev/null"
+        v4 += "iptables -t mangle -N $STAT_CHAIN 2>/dev/null"
+        for (rule in rules) {
+            val uid = rule.uid
+            val id = ids.of(uid)
+            if (id == null) {
+                // 彻底断网：直接 DROP（IPv4）
+                v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j DROP"
+            } else {
+                v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j CLASSIFY --set-class 1:$id"
+            }
+            v4 += "iptables -t mangle -A $STAT_CHAIN -m owner --uid-owner $uid -j RETURN"
+        }
+        v4 += "iptables -t mangle -A $MANGLE_CHAIN -j RETURN"
+        v4 += "iptables -t mangle -A $STAT_CHAIN -j RETURN"
+        v4 += "iptables -t mangle -I POSTROUTING -j $STAT_CHAIN"
+        v4 += "iptables -t mangle -I POSTROUTING -j $MANGLE_CHAIN"
+        val r2 = RootShell.run(v4, timeoutSec = 15)
+        val v4Ok = !r2.out.contains("No chain/target/match") && !r2.out.contains("not supported")
+        if (!v4Ok) {
+            lastMessage = "iptables mangle 不可用：${r2.out.take(160)}"
+            return false
+        }
+
+        // 3) IPv6 mangle：同样的分类 / 断网，把 IPv6 包送进同一批 htb class
+        var v6Ok = true
+        if (hasV6) {
+            val v6 = ArrayList<String>()
+            v6 += "ip6tables -t mangle -F $MANGLE_CHAIN 2>/dev/null"
+            v6 += "ip6tables -t mangle -X $MANGLE_CHAIN 2>/dev/null"
+            v6 += "ip6tables -t mangle -N $MANGLE_CHAIN 2>/dev/null"
+            for (rule in rules) {
+                val uid = rule.uid
+                val id = ids.of(uid)
+                if (id == null) {
+                    v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j DROP"
+                } else {
+                    v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j CLASSIFY --set-class 1:$id"
+                }
+            }
+            v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -j RETURN"
+            v6 += "ip6tables -t mangle -I POSTROUTING -j $MANGLE_CHAIN"
+            val r3 = RootShell.run(v6, timeoutSec = 15)
+            v6Ok = !r3.out.contains("No chain/target/match") &&
+                !r3.out.contains("not supported") &&
+                !r3.out.contains("not found")
+        }
+
+        lastMessage = if (v6Ok) {
+            "tc+htb 字节级限速已生效（${rules.size} 个应用，IPv4+IPv6）"
+        } else {
+            "tc+htb 已生效（IPv4）；注意：内核缺 ip6tables，IPv6 未覆盖"
+        }
+        return true
+    }
+
+    private fun applyWithIptables(rules: List<AppRule>, hasV6: Boolean): Boolean {
+        // 1) IPv4：filter OUTPUT owner + limit
+        val v4 = ArrayList<String>()
+        v4 += "iptables -D OUTPUT -j $OUT_CHAIN 2>/dev/null"
+        v4 += "iptables -F $OUT_CHAIN 2>/dev/null"
+        v4 += "iptables -X $OUT_CHAIN 2>/dev/null"
+        v4 += "iptables -N $OUT_CHAIN 2>/dev/null"
+        v4 += "iptables -t mangle -F $STAT_CHAIN 2>/dev/null"
+        v4 += "iptables -t mangle -X $STAT_CHAIN 2>/dev/null"
+        v4 += "iptables -t mangle -N $STAT_CHAIN 2>/dev/null"
         for (rule in rules) {
             val uid = rule.uid
             when {
                 rule.blocked || rule.upKbps == 0 -> {
-                    cmds += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -j REJECT --reject-with tcp-reset"
+                    // TCP 给 RST 快速断开；UDP 等其余协议一律 DROP（tcp-reset 对非 TCP 无效）
+                    v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -p tcp -j REJECT --reject-with tcp-reset"
+                    v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -j DROP"
                 }
                 rule.upKbps > 0 -> {
                     // 按包计数限速：折算成每秒包数（满包估算，实际速率通常偏低 = 更严格）
                     val pps = max(1, rule.upKbps * 1024 / AVG_PACKET)
                     val burst = max(2, pps / 5)
-                    cmds += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -m limit --limit $pps/second --limit-burst $burst -j ACCEPT"
-                    cmds += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -j DROP"
+                    v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -m limit --limit $pps/second --limit-burst $burst -j ACCEPT"
+                    v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -j DROP"
                 }
             }
-            cmds += "iptables -t mangle -A $STAT_CHAIN -m owner --uid-owner $uid -j RETURN"
+            v4 += "iptables -t mangle -A $STAT_CHAIN -m owner --uid-owner $uid -j RETURN"
         }
-        cmds += "iptables -A $OUT_CHAIN -j RETURN"
-        cmds += "iptables -I OUTPUT -j $OUT_CHAIN"
-        cmds += "iptables -t mangle -A $STAT_CHAIN -j RETURN"
-        cmds += "iptables -t mangle -I OUTPUT -j $STAT_CHAIN"
+        v4 += "iptables -A $OUT_CHAIN -j RETURN"
+        v4 += "iptables -I OUTPUT -j $OUT_CHAIN"
+        // 统计链挂 POSTROUTING：被 limit DROP 的包到不了这里，计数 = 实际出口流量
+        v4 += "iptables -t mangle -A $STAT_CHAIN -j RETURN"
+        v4 += "iptables -t mangle -I POSTROUTING -j $STAT_CHAIN"
+        val r1 = RootShell.run(v4, timeoutSec = 20)
+        val v4Ok = !r1.out.contains("No chain/target/match") && !r1.out.contains("not supported")
+        if (!v4Ok) {
+            lastMessage = "iptables 不可用：${r1.out.take(160)}"
+            return false
+        }
 
-        val r = RootShell.run(cmds, timeoutSec = 25)
-        val ok = !r.out.contains("No chain/target/match") && !r.out.contains("not supported")
-        lastMessage = if (ok) "iptables 规则已生效（${rules.size} 个应用）" else "iptables 不可用：${r.out.take(160)}"
-        return ok
+        // 2) IPv6：同名链、同样语义（与 IPv4 家族隔离互不影响）
+        var v6Ok = false
+        if (hasV6) {
+            val v6 = ArrayList<String>()
+            v6 += "ip6tables -D OUTPUT -j $OUT_CHAIN 2>/dev/null"
+            v6 += "ip6tables -F $OUT_CHAIN 2>/dev/null"
+            v6 += "ip6tables -X $OUT_CHAIN 2>/dev/null"
+            v6 += "ip6tables -N $OUT_CHAIN 2>/dev/null"
+            for (rule in rules) {
+                val uid = rule.uid
+                when {
+                    rule.blocked || rule.upKbps == 0 -> {
+                        v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner $uid -j DROP"
+                    }
+                    rule.upKbps > 0 -> {
+                        val pps = max(1, rule.upKbps * 1024 / AVG_PACKET)
+                        val burst = max(2, pps / 5)
+                        v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner $uid -m limit --limit $pps/second --limit-burst $burst -j ACCEPT"
+                        v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner $uid -j DROP"
+                    }
+                }
+            }
+            v6 += "ip6tables -A $OUT_CHAIN -j RETURN"
+            v6 += "ip6tables -I OUTPUT -j $OUT_CHAIN"
+            val r2 = RootShell.run(v6, timeoutSec = 20)
+            v6Ok = !r2.out.contains("No chain/target/match") &&
+                !r2.out.contains("not supported") &&
+                !r2.out.contains("not found")
+        }
+
+        lastMessage = if (v6Ok) {
+            "iptables 限速已生效（${rules.size} 个应用，IPv4+IPv6）"
+        } else {
+            "iptables 已生效（IPv4）；注意：内核缺 ip6tables，IPv6 未覆盖"
+        }
+        return true
     }
 
     fun clear() {
         val cmds = ArrayList<String>()
-        cmds += "iptables -D OUTPUT -j $OUT_CHAIN 2>/dev/null"
-        cmds += "iptables -F $OUT_CHAIN 2>/dev/null"
-        cmds += "iptables -X $OUT_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -D OUTPUT -j $MANGLE_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -F $MANGLE_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -X $MANGLE_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -D OUTPUT -j $STAT_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -F $STAT_CHAIN 2>/dev/null"
-        cmds += "iptables -t mangle -X $STAT_CHAIN 2>/dev/null"
+        for (ipt in listOf("iptables", "ip6tables")) {
+            cmds += "$ipt -D OUTPUT -j $OUT_CHAIN 2>/dev/null"
+            cmds += "$ipt -F $OUT_CHAIN 2>/dev/null"
+            cmds += "$ipt -X $OUT_CHAIN 2>/dev/null"
+            cmds += "$ipt -t mangle -D POSTROUTING -j $MANGLE_CHAIN 2>/dev/null"
+            cmds += "$ipt -t mangle -D POSTROUTING -j $STAT_CHAIN 2>/dev/null"
+            cmds += "$ipt -t mangle -D OUTPUT -j $MANGLE_CHAIN 2>/dev/null"
+            cmds += "$ipt -t mangle -D OUTPUT -j $STAT_CHAIN 2>/dev/null"
+            cmds += "$ipt -t mangle -F $MANGLE_CHAIN 2>/dev/null"
+            cmds += "$ipt -t mangle -X $MANGLE_CHAIN 2>/dev/null"
+            cmds += "$ipt -t mangle -F $STAT_CHAIN 2>/dev/null"
+            cmds += "$ipt -t mangle -X $STAT_CHAIN 2>/dev/null"
+        }
         // 清掉 tc（常用出口都试一遍）
-        for (d in arrayOf("eth0", "wlan0", "p2p0", "tun0")) {
+        for (d in arrayOf("eth0", "eth1", "wlan0", "p2p0", "tun0")) {
             cmds += "tc qdisc del dev $d root 2>/dev/null"
         }
         RootShell.run(cmds, timeoutSec = 10)

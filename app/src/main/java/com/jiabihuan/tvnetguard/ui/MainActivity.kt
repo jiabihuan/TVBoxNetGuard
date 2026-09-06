@@ -158,12 +158,19 @@ class MainActivity : Activity() {
         tvSessions.text = "${getString(R.string.label_session_count)}：${EngineState.sessionCount}"
         tvLimited.text = "限速应用：${RuleStore.limitedUids().size} 个"
 
+        // 引擎告警（如 root 绕过检测）优先显示，红色高亮
+        val warn = EngineState.lastError
         tvTip.text = when {
+            warn != null -> warn
             !running -> "启动后，盒子该 App 的上行速度会被内核掐住。"
             kind == EngineState.ROOT && RootBackend.method.isNotEmpty() -> "内核限速方式：${RootBackend.method}。${RootBackend.lastMessage}"
             kind == EngineState.VPN && Prefs.rootMode -> "免 Root 模式已叠加 Root 加固：${RootBackend.lastMessage}"
             else -> "运行中。到「应用限速设置」给指定 App 设上行上限。"
         }
+        tvTip.setTextColor(
+            if (warn != null) resources.getColor(R.color.danger, theme)
+            else resources.getColor(R.color.text_secondary, theme)
+        )
         tvTip.visibility = View.VISIBLE
     }
 

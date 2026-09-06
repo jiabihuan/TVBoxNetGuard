@@ -102,6 +102,7 @@ class RootEngineService : Service() {
                 StatsStore.setSnapshot(RootStats.sample())
                 // 基于相邻两次快照的差值算速率
                 StatsStore.tick()
+                checkRootBypass()
 
                 if (lastRuleVersion != RuleStore.version) {
                     lastRuleVersion = RuleStore.version
@@ -112,6 +113,46 @@ class RootEngineService : Service() {
                 VpnLog.w("root tick error: ${t.message}")
             }
         }, 1, 1, TimeUnit.SECONDS)
+    }
+
+    private var rootUidTicks = 0
+    private var unknownTicks = 0
+
+    /**
+     * 绕过检测：应用一旦被授予 root，它的上传会以 uid 0（root）发出，
+     * 内核里按 uid 匹配的限速规则就不再命中 —— 这就是"给了 root 就限不住"的原理。
+     * 检测到 root 身份上行异常（或整机上行远超被限应用之和）时在主界面告警。
+     */
+    private fun checkRootBypass() {
+        // 1) uid 0（root）上行异常：系统自身 root 上行通常只有几 KB/s
+        val rootTx = StatsStore.txRateOf(0)
+        if (rootTx > 300_000) {
+            if (++rootUidTicks >= 10) {
+                EngineState.note(
+                    "警告：检测到 root 身份上行 ${Format.speed(rootTx)}/s —— 可能有应用正通过 root 权限绕过限速。" +
+                        "请打开 root 管理器（Magisk/超级用户），把该应用设为「拒绝」并记住"
+                )
+            }
+            return
+        }
+        rootUidTicks = 0
+
+        // 2) 兜底：整机上行远超被限应用实测之和，说明有流量走了"未分类通道"
+        val global = StatsStore.globalTxRate
+        val limitedSum = RuleStore.all()
+            .filter { it.isLimited && !it.blocked }
+            .sumOf { StatsStore.txRateOf(it.uid) }
+        val unknown = global - limitedSum
+        if (global > 1_000_000 && unknown > 500_000) {
+            if (++unknownTicks >= 10) {
+                EngineState.note(
+                    "提示：整机上行 ${Format.speed(global)}/s 中约 ${Format.speed(unknown)}/s 来自未限速流量。" +
+                        "若远超预期，请检查是否有应用通过 root 提权绕过了限速"
+                )
+            }
+        } else {
+            unknownTicks = 0
+        }
     }
 
     private fun updateNotification() {

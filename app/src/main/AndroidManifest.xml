@@ -77,6 +77,12 @@
                 android:value="true" />
         </service>
 
+        <service
+            android:name=".vpn.RootEngineService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse"
+            android:stopWithTask="false" />
+
         <receiver
             android:name=".receiver.BootReceiver"
             android:enabled="true"

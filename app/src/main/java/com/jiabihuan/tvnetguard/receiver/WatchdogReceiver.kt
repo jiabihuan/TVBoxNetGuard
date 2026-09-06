@@ -8,8 +8,11 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.Build
 import android.os.SystemClock
+import com.jiabihuan.tvnetguard.EngineState
 import com.jiabihuan.tvnetguard.util.Prefs
+import com.jiabihuan.tvnetguard.util.RootShell
 import com.jiabihuan.tvnetguard.vpn.GuardVpnService
+import com.jiabihuan.tvnetguard.vpn.RootEngineService
 import com.jiabihuan.tvnetguard.vpn.VpnLog
 
 /**
@@ -21,10 +24,14 @@ class WatchdogReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         Prefs.init(context)
-        if (Prefs.autoStart && Prefs.watchdog && !GuardVpnService.running) {
+        if (Prefs.autoStart && Prefs.watchdog && !EngineState.running) {
             if (VpnService.prepare(context) == null) {
                 try {
-                    GuardVpnService.start(context)
+                    if (Prefs.mode == MODE_ROOT && RootShell.hasRoot()) {
+                        RootEngineService.start(context)
+                    } else {
+                        GuardVpnService.start(context)
+                    }
                     VpnLog.d("watchdog restarted engine")
                 } catch (t: Throwable) {
                     VpnLog.w("watchdog start failed: ${t.message}")
@@ -36,6 +43,7 @@ class WatchdogReceiver : BroadcastReceiver() {
 
     companion object {
         private const val REQ = 8801
+        private const val MODE_ROOT = 1
 
         fun schedule(context: Context) {
             val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return

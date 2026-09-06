@@ -7,16 +7,19 @@ import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.ViewGroup
+import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
+import com.jiabihuan.tvnetguard.EngineState
 import com.jiabihuan.tvnetguard.R
 import com.jiabihuan.tvnetguard.receiver.WatchdogReceiver
 import com.jiabihuan.tvnetguard.util.Prefs
 import com.jiabihuan.tvnetguard.vpn.GuardVpnService
 import com.jiabihuan.tvnetguard.vpn.Limiter
+import com.jiabihuan.tvnetguard.vpn.RootEngineService
 
 /** 设置页：用代码构建，省掉一堆布局文件，改动也直观 */
 class SettingsActivity : Activity() {
@@ -49,13 +52,10 @@ class SettingsActivity : Activity() {
             Limiter.refresh()
         })
 
-        root.addView(switchRow(getString(R.string.set_root), "内核 iptables 再落一道硬闸（需 root）", Prefs.rootMode) {
+        root.addView(modeRow())
+
+        root.addView(switchRow("Root 加固（VPN 模式下叠加）", "免 Root 模式同时用内核 iptables 兜底", Prefs.rootMode) {
             Prefs.rootMode = it
-            if (it) {
-                Thread { com.jiabihuan.tvnetguard.vpn.RootFirewall.apply() }.start()
-            } else {
-                com.jiabihuan.tvnetguard.vpn.RootFirewall.clear()
-            }
         })
 
         root.addView(switchRow("接管并阻断 IPv6", "防止应用走 IPv6 绕过限速（默认开启）", Prefs.blockIpv6) {
@@ -157,6 +157,57 @@ class SettingsActivity : Activity() {
         }
         row.addView(edit)
         return row
+    }
+
+    private fun modeRow(): LinearLayout {
+        val wrap = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(20, 18, 20, 18)
+        }
+        wrap.addView(TextView(this).apply {
+            text = "工作模式"
+            setTextColor(resources.getColor(R.color.text_primary, theme))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
+        })
+        wrap.addView(TextView(this).apply {
+            text = "盒子有 root 用「纯 Root」最稳，不占 VPN；无 root 才用「免 Root VPN」"
+            setTextColor(resources.getColor(R.color.text_secondary, theme))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(0, 4, 0, 10)
+        })
+        val group = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+        }
+        val labels = listOf("自动" to 0, "纯 Root" to 1, "免 Root VPN" to 2)
+        for ((name, value) in labels) {
+            val btn = Button(this).apply {
+                text = name
+                setPadding(24, 12, 24, 12)
+                setOnClickListener {
+                    Prefs.mode = value
+                    if (EngineState.running) {
+                        if (EngineState.kind == EngineState.ROOT) RootEngineService.stop(this@SettingsActivity)
+                        else GuardVpnService.stop(this@SettingsActivity)
+                    }
+                    updateModeButtons(group)
+                }
+            }
+            group.addView(btn)
+        }
+        wrap.addView(group)
+        wrap.post { updateModeButtons(group) }
+        return wrap
+    }
+
+    private fun updateModeButtons(group: LinearLayout) {
+        val values = listOf(0, 1, 2)
+        for (i in 0 until group.childCount) {
+            val b = group.getChildAt(i) as Button
+            val v = values.getOrElse(i) { 0 }
+            val on = v == Prefs.mode
+            b.setBackgroundColor(if (on) resources.getColor(R.color.primary, theme) else resources.getColor(R.color.bg_card, theme))
+            b.setTextColor(if (on) Color.BLACK else Color.WHITE)
+        }
     }
 
     private fun aboutView(): TextView = TextView(this).apply {

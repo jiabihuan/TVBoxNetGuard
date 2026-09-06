@@ -9,14 +9,16 @@ import android.os.Looper
 import android.view.View
 import android.widget.Button
 import android.widget.TextView
+import com.jiabihuan.tvnetguard.EngineState
 import com.jiabihuan.tvnetguard.R
 import com.jiabihuan.tvnetguard.data.RuleStore
 import com.jiabihuan.tvnetguard.data.StatsStore
 import com.jiabihuan.tvnetguard.util.Format
 import com.jiabihuan.tvnetguard.util.Prefs
+import com.jiabihuan.tvnetguard.util.RootShell
 import com.jiabihuan.tvnetguard.vpn.GuardVpnService
-import com.jiabihuan.tvnetguard.vpn.Limiter
-import com.jiabihuan.tvnetguard.vpn.RootFirewall
+import com.jiabihuan.tvnetguard.vpn.RootBackend
+import com.jiabihuan.tvnetguard.vpn.RootEngineService
 
 /** 主界面：引擎开关 + 整机上下行实时速率 */
 class MainActivity : Activity() {
@@ -80,37 +82,53 @@ class MainActivity : Activity() {
     }
 
     private fun toggleEngine() {
-        if (GuardVpnService.running) {
-            GuardVpnService.stop(this)
+        if (EngineState.running) {
+            stopEngine()
             return
         }
-        val prepare = VpnService.prepare(this)
-        if (prepare != null) {
-            startActivityForResult(prepare, REQ_VPN)
-        } else {
-            startEngine()
+        when (Prefs.mode) {
+            MODE_VPN -> prepareThenStartVpn()
+            MODE_ROOT -> startRoot()
+            else -> {
+                if (RootShell.hasRoot()) startRoot() else prepareThenStartVpn()
+            }
         }
+        handler.postDelayed({ refresh() }, 500)
+    }
+
+    private fun stopEngine() {
+        if (EngineState.kind == EngineState.ROOT) RootEngineService.stop(this)
+        else GuardVpnService.stop(this)
+    }
+
+    private fun startRoot() {
+        RootEngineService.start(this)
+    }
+
+    private fun prepareThenStartVpn() {
+        val prepare = VpnService.prepare(this)
+        if (prepare != null) startActivityForResult(prepare, REQ_VPN)
+        else GuardVpnService.start(this)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQ_VPN && resultCode == RESULT_OK) startEngine()
-        else if (requestCode == REQ_VPN) {
-            tvTip.text = "未授权 VPN，无法接管流量"
-        }
-    }
-
-    private fun startEngine() {
-        GuardVpnService.start(this)
-        handler.postDelayed({ refresh() }, 400)
+        if (requestCode == REQ_VPN && resultCode == RESULT_OK) prepareThenStartVpn()
+        else if (requestCode == REQ_VPN) tvTip.text = "未授权 VPN，无法用免 Root 模式。可在设置里切换到「纯 Root」"
     }
 
     private fun refresh() {
         if (!refreshing) return
         StatsStore.tick()
 
-        val running = GuardVpnService.running
-        tvState.text = if (running) getString(R.string.engine_running) else getString(R.string.engine_stopped)
+        val running = EngineState.running
+        val kind = EngineState.kind
+        val engineLabel = when (kind) {
+            EngineState.ROOT -> "纯 Root 内核"
+            EngineState.VPN -> "免 Root VPN"
+            else -> ""
+        }
+        tvState.text = if (running) "引擎运行中 · $engineLabel" else getString(R.string.engine_stopped)
         tvState.setTextColor(
             if (running) resources.getColor(R.color.down, theme)
             else resources.getColor(R.color.danger, theme)
@@ -129,25 +147,28 @@ class MainActivity : Activity() {
         tvUpTotal.text = "${getString(R.string.label_total_up)} ${Format.bytes(totalTx)}"
         tvDownTotal.text = "${getString(R.string.label_total_down)} ${Format.bytes(totalRx)}"
 
-        val mode = when {
-            Prefs.rootMode && RootFirewall.active -> getString(R.string.mode_vpn_root)
-            Prefs.rootMode -> getString(R.string.mode_root)
-            else -> getString(R.string.mode_vpn)
+        val modeLabel = when (Prefs.mode) {
+            MODE_ROOT -> getString(R.string.mode_root)
+            MODE_VPN -> getString(R.string.mode_vpn)
+            else -> if (RootShell.hasRoot()) "自动（将用 Root）" else "自动（将用 VPN）"
         }
-        tvMode.text = "${getString(R.string.label_mode)}：$mode"
-        tvSessions.text = "${getString(R.string.label_session_count)}：${GuardVpnService.sessionCount}"
-        tvLimited.text = "限速应用：${RuleStore.limitedUids().size} 个 · 已丢包：${Limiter.droppedPackets}"
+        tvMode.text = "${getString(R.string.label_mode)}：$modeLabel"
+        tvSessions.text = "${getString(R.string.label_session_count)}：${EngineState.sessionCount}"
+        tvLimited.text = "限速应用：${RuleStore.limitedUids().size} 个"
 
         tvTip.text = when {
-            !running -> "启动后，盒子所有流量会经过本机转发，即可按应用限速。"
-            Prefs.rootMode && !RootFirewall.active -> "提示：${RootFirewall.lastMessage}"
-            Limiter.droppedPackets > 0 -> "严格模式已丢弃 ${Format.bytes(Limiter.droppedBytes)} 上行数据"
-            else -> "运行中。按「应用限速设置」给指定 App 设置上行上限。"
+            !running -> "启动后，盒子该 App 的上行速度会被内核掐住。"
+            kind == EngineState.ROOT && RootBackend.method.isNotEmpty() -> "内核限速方式：${RootBackend.method}。${RootBackend.lastMessage}"
+            kind == EngineState.VPN && Prefs.rootMode -> "免 Root 模式已叠加 Root 加固：${RootBackend.lastMessage}"
+            else -> "运行中。到「应用限速设置」给指定 App 设上行上限。"
         }
         tvTip.visibility = View.VISIBLE
     }
 
     companion object {
         private const val REQ_VPN = 1001
+        private const val MODE_AUTO = 0
+        private const val MODE_ROOT = 1
+        private const val MODE_VPN = 2
     }
 }

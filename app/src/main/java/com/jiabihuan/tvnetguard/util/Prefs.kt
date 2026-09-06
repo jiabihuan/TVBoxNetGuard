@@ -17,6 +17,7 @@ object Prefs {
     private const val KEY_GLOBAL_DOWN = "global_down_kbps"
     private const val KEY_STRICT_GLOBAL = "strict_global"
     private const val KEY_ROOT_MODE = "root_mode"
+    private const val KEY_MODE = "engine_mode"
     private const val KEY_LOG = "log_enabled"
     private const val KEY_MTU = "mtu"
     private const val KEY_SHOW_SYSTEM = "show_system"
@@ -52,6 +53,11 @@ object Prefs {
     var rootMode: Boolean
         get() = sp.getBoolean(KEY_ROOT_MODE, false)
         set(v) = sp.edit().putBoolean(KEY_ROOT_MODE, v).apply()
+
+    /** 引擎工作模式：0=自动(有 root 用 root，否则 VPN) 1=纯 Root 2=免 Root VPN */
+    var mode: Int
+        get() = sp.getInt(KEY_MODE, 0)
+        set(v) = sp.edit().putInt(KEY_MODE, v).apply()
 
     var logEnabled: Boolean
         get() = sp.getBoolean(KEY_LOG, false)

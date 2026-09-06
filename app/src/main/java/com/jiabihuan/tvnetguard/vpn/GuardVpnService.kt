@@ -9,6 +9,7 @@ import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import com.jiabihuan.tvnetguard.App
+import com.jiabihuan.tvnetguard.EngineState
 import com.jiabihuan.tvnetguard.R
 import com.jiabihuan.tvnetguard.data.RuleStore
 import com.jiabihuan.tvnetguard.data.StatsStore
@@ -158,7 +159,8 @@ class GuardVpnService : VpnService() {
 
         // 规则可能在引擎停着的时候改过，进来先同步一次
         lastRuleVersion = -1L
-        if (Prefs.rootMode) RootFirewall.apply()
+        if (Prefs.rootMode) RootBackend.apply()
+        EngineState.setRunning(EngineState.VPN)
         VpnLog.d("engine started, mtu=$mtu")
     }
 
@@ -211,7 +213,7 @@ class GuardVpnService : VpnService() {
                 if (lastRuleVersion != RuleStore.version) {
                     lastRuleVersion = RuleStore.version
                     sessions?.killBlocked()
-                    if (Prefs.rootMode) RootFirewall.apply()
+                    if (Prefs.rootMode) RootBackend.apply()
                 }
 
                 if (++tickCount % 5 == 0) {
@@ -280,6 +282,7 @@ class GuardVpnService : VpnService() {
 
     private fun stopEngine() {
         running = false
+        EngineState.setStopped()
         looping.set(false)
         scheduler?.shutdownNow()
         scheduler = null
@@ -291,7 +294,7 @@ class GuardVpnService : VpnService() {
         vpnIn = null
         vpnOut = null
         vpnFd = null
-        RootFirewall.clear()
+        RootBackend.clear()
         VpnLog.d("engine stopped")
     }
 

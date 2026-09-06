@@ -38,6 +38,18 @@ object StatsStore {
         rx.getOrPut(uid) { AtomicLong(0) }.addAndGet(bytes)
     }
 
+    /**
+     * root 模式专用：qtaguid / iptables 给出的是**绝对累计值**，
+     * 直接覆盖，tick() 会基于相邻两次快照的差值算出实时速率（与 addTx 增量模型可互换，
+     * 但切换模式前务必 [reset]，避免两类数据叠加）。
+     */
+    fun setSnapshot(snapshot: Map<Int, Pair<Long, Long>>) {
+        for ((uid, pr) in snapshot) {
+            tx.getOrPut(uid) { AtomicLong(0) }.set(pr.first)
+            rx.getOrPut(uid) { AtomicLong(0) }.set(pr.second)
+        }
+    }
+
     fun totalTx(uid: Int): Long = tx[uid]?.get() ?: 0L
     fun totalRx(uid: Int): Long = rx[uid]?.get() ?: 0L
     fun txRateOf(uid: Int): Long = txRate[uid] ?: 0L

@@ -10,16 +10,19 @@ import android.content.SharedPreferences
  * @param downKbps 下行限速，KB/s。含义同上
  * @param strict   true = 严格模式（配额用尽直接丢包，绝不突发）；false = 排队延迟发送（速率平滑）
  * @param blocked  true = 该应用彻底断网（上下行全丢）
+ * @param blockUdp true = 丢弃该应用所有 UDP 包（掐断 P2P/PCDN 的分片交换，
+ *                 TCP 走 HTTP 的视频播放不受影响 —— 针对七牛 P2P-CDN 类 SDK）
  */
 data class AppRule(
     val uid: Int,
     val upKbps: Int = -1,
     val downKbps: Int = -1,
     val strict: Boolean = true,
-    val blocked: Boolean = false
+    val blocked: Boolean = false,
+    val blockUdp: Boolean = false
 ) {
     val isLimited: Boolean
-        get() = blocked || upKbps >= 0 || downKbps >= 0
+        get() = blocked || upKbps >= 0 || downKbps >= 0 || blockUdp
 
     companion object {
         fun parse(uid: Int, raw: String?): AppRule {
@@ -31,12 +34,14 @@ data class AppRule(
                 upKbps = p[0].toIntOrNull() ?: -1,
                 downKbps = p[1].toIntOrNull() ?: -1,
                 strict = p[2] == "1",
-                blocked = p[3] == "1"
+                blocked = p[3] == "1",
+                blockUdp = p.size >= 5 && p[4] == "1"
             )
         }
     }
 
-    fun serialize(): String = "$upKbps|$downKbps|${if (strict) 1 else 0}|${if (blocked) 1 else 0}"
+    fun serialize(): String =
+        "$upKbps|$downKbps|${if (strict) 1 else 0}|${if (blocked) 1 else 0}|${if (blockUdp) 1 else 0}"
 }
 
 object RuleStore {
@@ -73,7 +78,7 @@ object RuleStore {
 
     fun put(rule: AppRule) {
         synchronized(cache) {
-            if (rule.upKbps < 0 && rule.downKbps < 0 && !rule.blocked && !rule.strict) {
+            if (rule.upKbps < 0 && rule.downKbps < 0 && !rule.blocked && !rule.blockUdp && !rule.strict) {
                 cache.remove(rule.uid)
                 sp.edit().remove(rule.uid.toString()).apply()
             } else {

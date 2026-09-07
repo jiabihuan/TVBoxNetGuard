@@ -58,7 +58,7 @@ internal class UdpSession(
         synchronized(initLock) {
             socket?.let { return it }
             uid = uidResolver.resolve(Packets.IPPROTO_UDP, clientIp, clientPort, remoteIp, remotePort)
-            if (uid >= 0 && Limiter.isBlocked(uid)) {
+            if (uid >= 0 && (Limiter.isBlocked(uid) || Limiter.isUdpBlocked(uid))) {
                 closed = true
                 return null
             }
@@ -83,7 +83,7 @@ internal class UdpSession(
         val off = pkt.udpPayloadOffset()
         val len = pkt.udpPayloadLength()
         if (len <= 0) return
-        if (uid >= 0 && Limiter.isBlocked(uid)) return
+        if (uid >= 0 && (Limiter.isBlocked(uid) || Limiter.isUdpBlocked(uid))) return
 
         val bytes = pkt.totalLength
         Limiter.consumeUp(uid, bytes)
@@ -105,6 +105,8 @@ internal class UdpSession(
                     val n = p.length
                     if (n <= 0) continue
                     lastActive = System.currentTimeMillis()
+                    // 禁 UDP 的应用：下行 UDP 一并丢弃（P2P 信令也是 UDP，掐双向更彻底）
+                    if (uid >= 0 && Limiter.isUdpBlocked(uid)) continue
                     val bytes = n + 28 // IP + UDP 头
                     Limiter.consumeDown(uid, bytes)
                     StatsStore.addRx(uid, bytes.toLong())

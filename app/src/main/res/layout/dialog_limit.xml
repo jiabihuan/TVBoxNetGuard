@@ -123,6 +123,24 @@
             android:textSize="17sp" />
 
         <CheckBox
+            android:id="@+id/cb_block_udp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="10dp"
+            android:buttonTint="@color/accent"
+            android:text="@string/dlg_block_udp"
+            android:textColor="@color/text_primary"
+            android:textSize="17sp" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="32dp"
+            android:text="@string/dlg_block_udp_hint"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <CheckBox
             android:id="@+id/cb_lock"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

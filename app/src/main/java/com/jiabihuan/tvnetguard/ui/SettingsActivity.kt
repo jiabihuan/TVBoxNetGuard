@@ -318,7 +318,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun aboutView(): TextView = TextView(this).apply {
-        text = "星河守卫 TV v1.2.0"
+        text = "星河守卫 TV v1.3.0"
         setTextColor(resources.getColor(R.color.text_secondary, theme))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         setPadding(20, 32, 20, 20)

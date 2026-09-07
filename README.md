@@ -85,6 +85,15 @@ iptables -A tng_out -m owner --uid-owner <uid> -j DROP
 | --- | --- |
 | 上行上限 N KB/s | 超出配额**丢包**（让 TCP 自己降速），绝不重置连接 |
 | 上行 0 / 彻底禁止 | 直接 DROP / REJECT，连门都不给开 |
+| **禁 UDP（掐 P2P/PCDN）** | 丢弃该应用**全部 UDP 包**（IPv4 + IPv6），TCP 不受影响 |
+
+**为什么有「禁 UDP」这个开关**：以「剧迷TV」为代表的电视点播 App 内置了
+七牛云 P2P-CDN SDK（`com.qiniu.upd`，跑在独立进程 `:AgentService` +
+JNI `libandroid_agent_jni.so` 里），会把你看过的视频分片通过 **UDP**
+上传给其他观众，几分钟就能吃掉几百 MB 上行。这种流量的特点是 UDP 分片
+交换 + TCP tracker 调度，而**视频正片本身走 TCP/HTTP**——所以掐掉 UDP
+就能精准杀死 P2P 上传，看视频完全不受影响。在限速弹窗里勾选
+「禁 UDP —— 掐断 P2P/PCDN 上传」即可，比单纯限速更省心。
 
 ### 2. 统计：qtaguid，也不依赖 VPN
 

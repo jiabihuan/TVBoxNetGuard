@@ -11,8 +11,8 @@ android {
         applicationId = "com.jiabihuan.tvnetguard"
         minSdk = 23
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.3.0"
         // 只打包主流盒子/电视的 ABI
         ndk {
             abiFilters += listOf("armeabi-v7a", "arm64-v8a")

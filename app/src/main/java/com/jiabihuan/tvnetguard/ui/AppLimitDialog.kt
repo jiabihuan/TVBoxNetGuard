@@ -28,6 +28,7 @@ object AppLimitDialog {
         val etUp = dialog.findViewById<EditText>(R.id.et_up)
         val cbStrict = dialog.findViewById<CheckBox>(R.id.cb_strict)
         val cbBlock = dialog.findViewById<CheckBox>(R.id.cb_block_all)
+        val cbUdp = dialog.findViewById<CheckBox>(R.id.cb_block_udp)
         val cbLock = dialog.findViewById<CheckBox>(R.id.cb_lock)
 
         title.text = entry.name
@@ -37,6 +38,7 @@ object AppLimitDialog {
         etUp.setText(if (rule.upKbps > 0) rule.upKbps.toString() else "")
         cbStrict.isChecked = rule.strict
         cbBlock.isChecked = rule.blocked
+        cbUdp.isChecked = rule.blockUdp
         cbLock.isChecked = Prefs.floatLockUid == entry.uid
 
         fun setPreset(up: Int) {
@@ -56,7 +58,8 @@ object AppLimitDialog {
                 upKbps = up,
                 downKbps = -1,
                 strict = cbStrict.isChecked,
-                blocked = cbBlock.isChecked
+                blocked = cbBlock.isChecked,
+                blockUdp = cbUdp.isChecked
             )
             RuleStore.put(saved)
             // 悬浮窗锁定：勾选则锁定本应用，再勾则解除（仅当当前就是它才清）

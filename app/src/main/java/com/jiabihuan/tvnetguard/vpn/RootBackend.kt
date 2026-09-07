@@ -145,11 +145,20 @@ object RootBackend {
         for (rule in rules) {
             val uid = rule.uid
             val id = ids.of(uid)
-            if (id == null) {
-                // 彻底断网：直接 DROP（IPv4）
-                v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j DROP"
-            } else {
-                v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j CLASSIFY --set-class 1:$id"
+            when {
+                rule.blocked || rule.upKbps == 0 -> {
+                    // 彻底断网：直接 DROP（IPv4）
+                    v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j DROP"
+                }
+                else -> {
+                    // 禁 UDP（掐 P2P/PCDN）：放在 CLASSIFY 之前，UDP 包在此终止
+                    if (rule.blockUdp) {
+                        v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -p udp -j DROP"
+                    }
+                    if (id != null) {
+                        v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j CLASSIFY --set-class 1:$id"
+                    }
+                }
             }
             v4 += "iptables -t mangle -A $STAT_CHAIN -m owner --uid-owner $uid -j RETURN"
         }
@@ -178,10 +187,18 @@ object RootBackend {
             for (rule in rules) {
                 val uid = rule.uid
                 val id = ids.of(uid)
-                if (id == null) {
-                    v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j DROP"
-                } else {
-                    v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j CLASSIFY --set-class 1:$id"
+                when {
+                    rule.blocked || rule.upKbps == 0 -> {
+                        v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j DROP"
+                    }
+                    else -> {
+                        if (rule.blockUdp) {
+                            v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -p udp -j DROP"
+                        }
+                        if (id != null) {
+                            v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j CLASSIFY --set-class 1:$id"
+                        }
+                    }
                 }
             }
             v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -j RETURN"
@@ -225,12 +242,18 @@ object RootBackend {
                     v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -p tcp -j REJECT --reject-with tcp-reset"
                     v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -j DROP"
                 }
-                rule.upKbps > 0 -> {
-                    // 按包计数限速：折算成每秒包数（满包估算，实际速率通常偏低 = 更严格）
-                    val pps = max(1, rule.upKbps * 1024 / AVG_PACKET)
-                    val burst = max(2, pps / 5)
-                    v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -m limit --limit $pps/second --limit-burst $burst -j ACCEPT"
-                    v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -j DROP"
+                else -> {
+                    // 禁 UDP（掐 P2P/PCDN）：必须放在 limit ACCEPT 之前，否则 UDP 先被 ACCEPT 逃逸
+                    if (rule.blockUdp) {
+                        v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -p udp -j DROP"
+                    }
+                    if (rule.upKbps > 0) {
+                        // 按包计数限速：折算成每秒包数（满包估算，实际速率通常偏低 = 更严格）
+                        val pps = max(1, rule.upKbps * 1024 / AVG_PACKET)
+                        val burst = max(2, pps / 5)
+                        v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -m limit --limit $pps/second --limit-burst $burst -j ACCEPT"
+                        v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -j DROP"
+                    }
                 }
             }
             v4 += "iptables -t mangle -A $STAT_CHAIN -m owner --uid-owner $uid -j RETURN"
@@ -268,11 +291,16 @@ object RootBackend {
                     rule.blocked || rule.upKbps == 0 -> {
                         v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner $uid -j DROP"
                     }
-                    rule.upKbps > 0 -> {
-                        val pps = max(1, rule.upKbps * 1024 / AVG_PACKET)
-                        val burst = max(2, pps / 5)
-                        v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner $uid -m limit --limit $pps/second --limit-burst $burst -j ACCEPT"
-                        v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner $uid -j DROP"
+                    else -> {
+                        if (rule.blockUdp) {
+                            v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner $uid -p udp -j DROP"
+                        }
+                        if (rule.upKbps > 0) {
+                            val pps = max(1, rule.upKbps * 1024 / AVG_PACKET)
+                            val burst = max(2, pps / 5)
+                            v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner $uid -m limit --limit $pps/second --limit-burst $burst -j ACCEPT"
+                            v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner $uid -j DROP"
+                        }
                     }
                 }
             }

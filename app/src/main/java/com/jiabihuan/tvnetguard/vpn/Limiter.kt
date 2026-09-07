@@ -18,7 +18,8 @@ object Limiter {
         val upBytes: Long,     // -1 不限，0 禁止
         val downBytes: Long,
         val strict: Boolean,
-        val blocked: Boolean
+        val blocked: Boolean,
+        val blockUdp: Boolean = false
     ) {
         val hasUpLimit: Boolean get() = upBytes >= 0
         val hasDownLimit: Boolean get() = downBytes >= 0
@@ -36,7 +37,7 @@ object Limiter {
     var droppedBytes = 0L
         private set
 
-    private val NO_LIMIT = Cfg(-1, -1, false, false)
+    private val NO_LIMIT = Cfg(-1, -1, false, false, false)
 
     fun refresh() {
         val gUp = kbpsToBytes(Prefs.globalUpKbps)
@@ -51,7 +52,8 @@ object Limiter {
                 upBytes = kbpsToBytes(r.upKbps),
                 downBytes = kbpsToBytes(r.downKbps),
                 strict = r.strict,
-                blocked = r.blocked
+                blocked = r.blocked,
+                blockUdp = r.blockUdp
             )
         }
         // 清理已删除规则的桶
@@ -168,6 +170,9 @@ object Limiter {
 
     /** 该 uid 是否被彻底断网 */
     fun isBlocked(uid: Int): Boolean = cfg(uid).blocked
+
+    /** 该 uid 的 UDP 是否被整体丢弃（掐 P2P/PCDN） */
+    fun isUdpBlocked(uid: Int): Boolean = cfg(uid).blockUdp
 
     private fun drop(bytes: Int) {
         droppedPackets++

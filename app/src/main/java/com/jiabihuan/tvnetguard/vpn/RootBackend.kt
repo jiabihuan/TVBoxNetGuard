@@ -2,6 +2,7 @@ package com.jiabihuan.tvnetguard.vpn
 
 import com.jiabihuan.tvnetguard.data.AppRule
 import com.jiabihuan.tvnetguard.data.RuleStore
+import com.jiabihuan.tvnetguard.util.Prefs
 import com.jiabihuan.tvnetguard.util.RootShell
 import kotlin.math.max
 
@@ -47,7 +48,10 @@ object RootBackend {
 
     fun available(): Boolean = RootShell.hasRoot()
 
-    /** 依据当前规则应用内核限速；空规则则清空。返回是否成功。 */
+    /** root 流量闸：uid 0（root）出站上行限值，KB/s */
+    private const val GATE_KBPS = 128
+
+    /** 依据当前规则应用内核限速；无规则且闸关闭则清空。返回是否成功。 */
     fun apply(): Boolean {
         if (!RootShell.hasRoot()) {
             lastMessage = "未获取到 root 权限"
@@ -55,7 +59,7 @@ object RootBackend {
             return false
         }
         val rules = RuleStore.all().filter { it.isLimited }
-        if (rules.isEmpty()) {
+        if (rules.isEmpty() && !Prefs.rootTrafficGate) {
             clear()
             return true
         }
@@ -64,11 +68,13 @@ object RootBackend {
         if (applyWithTc(rules, hasV6)) {
             method = "tc"
             active = true
+            if (Prefs.rootTrafficGate) lastMessage += "；root 流量闸已开启（uid 0 上行 ${GATE_KBPS} KB/s）"
             return true
         }
         if (applyWithIptables(rules, hasV6)) {
             method = "iptables"
             active = true
+            if (Prefs.rootTrafficGate) lastMessage += "；root 流量闸已开启（uid 0 上行 ${GATE_KBPS} KB/s）"
             return true
         }
         lastMessage = "内核不支持 owner 匹配，无法在内核层限速"
@@ -107,6 +113,10 @@ object RootBackend {
         tcCmds += "tc qdisc add dev $wan root handle 1: htb default 9999"
         tcCmds += "tc class add dev $wan parent 1: classid 1:1 htb rate 1000mbit ceil 1000mbit"
         tcCmds += "tc class add dev $wan parent 1: classid 1:9999 htb rate 1000mbit ceil 1000mbit"
+        // root 流量闸：uid 0（root 提权流量）固定走低速 class 1:2
+        if (Prefs.rootTrafficGate) {
+            tcCmds += "tc class add dev $wan parent 1: classid 1:2 htb rate ${GATE_KBPS}kbit ceil ${GATE_KBPS}kbit"
+        }
         for (rule in rules) {
             val id = ids.of(rule.uid) ?: continue
             tcCmds += "tc class add dev $wan parent 1:1 classid 1:$id htb rate ${rule.upKbps}kbit ceil ${rule.upKbps}kbit"
@@ -128,6 +138,10 @@ object RootBackend {
         v4 += "iptables -t mangle -F $STAT_CHAIN 2>/dev/null"
         v4 += "iptables -t mangle -X $STAT_CHAIN 2>/dev/null"
         v4 += "iptables -t mangle -N $STAT_CHAIN 2>/dev/null"
+        // root 流量闸（IPv4）：uid 0 的出站包分类进 1:2 低速 class
+        if (Prefs.rootTrafficGate) {
+            v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner 0 -j CLASSIFY --set-class 1:2"
+        }
         for (rule in rules) {
             val uid = rule.uid
             val id = ids.of(uid)
@@ -157,6 +171,10 @@ object RootBackend {
             v6 += "ip6tables -t mangle -F $MANGLE_CHAIN 2>/dev/null"
             v6 += "ip6tables -t mangle -X $MANGLE_CHAIN 2>/dev/null"
             v6 += "ip6tables -t mangle -N $MANGLE_CHAIN 2>/dev/null"
+            // root 流量闸（IPv6）
+            if (Prefs.rootTrafficGate) {
+                v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner 0 -j CLASSIFY --set-class 1:2"
+            }
             for (rule in rules) {
                 val uid = rule.uid
                 val id = ids.of(uid)
@@ -192,6 +210,13 @@ object RootBackend {
         v4 += "iptables -t mangle -F $STAT_CHAIN 2>/dev/null"
         v4 += "iptables -t mangle -X $STAT_CHAIN 2>/dev/null"
         v4 += "iptables -t mangle -N $STAT_CHAIN 2>/dev/null"
+        // root 流量闸（IPv4）：uid 0 出站限 GATE_KBPS，防提权应用绕过按应用限速
+        if (Prefs.rootTrafficGate) {
+            val pps0 = max(1, GATE_KBPS * 1024 / AVG_PACKET)
+            val burst0 = max(2, pps0 / 5)
+            v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner 0 -m limit --limit $pps0/second --limit-burst $burst0 -j ACCEPT"
+            v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner 0 -j DROP"
+        }
         for (rule in rules) {
             val uid = rule.uid
             when {
@@ -230,6 +255,13 @@ object RootBackend {
             v6 += "ip6tables -F $OUT_CHAIN 2>/dev/null"
             v6 += "ip6tables -X $OUT_CHAIN 2>/dev/null"
             v6 += "ip6tables -N $OUT_CHAIN 2>/dev/null"
+            // root 流量闸（IPv6）
+            if (Prefs.rootTrafficGate) {
+                val pps0 = max(1, GATE_KBPS * 1024 / AVG_PACKET)
+                val burst0 = max(2, pps0 / 5)
+                v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner 0 -m limit --limit $pps0/second --limit-burst $burst0 -j ACCEPT"
+                v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner 0 -j DROP"
+            }
             for (rule in rules) {
                 val uid = rule.uid
                 when {

@@ -3,6 +3,8 @@ package com.jiabihuan.tvnetguard.ui
 import android.app.Activity
 import android.graphics.Color
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.text.InputType
 import android.util.TypedValue
 import android.view.Gravity
@@ -16,14 +18,19 @@ import android.widget.Switch
 import android.widget.TextView
 import com.jiabihuan.tvnetguard.EngineState
 import com.jiabihuan.tvnetguard.R
+import com.jiabihuan.tvnetguard.data.AppLoader
 import com.jiabihuan.tvnetguard.receiver.WatchdogReceiver
 import com.jiabihuan.tvnetguard.util.Prefs
 import com.jiabihuan.tvnetguard.vpn.GuardVpnService
 import com.jiabihuan.tvnetguard.vpn.Limiter
+import com.jiabihuan.tvnetguard.vpn.RootAudit
+import com.jiabihuan.tvnetguard.vpn.RootBackend
 import com.jiabihuan.tvnetguard.vpn.RootEngineService
 
 /** 设置页：用代码构建。针对遥控器做了焦点处理——每行单独可聚焦、有高亮背景。 */
 class SettingsActivity : Activity() {
+
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,6 +65,17 @@ class SettingsActivity : Activity() {
         root.addView(switchRow("Root 加固（VPN 模式下叠加）", "免 Root 模式同时用内核 iptables 兜底", Prefs.rootMode) {
             Prefs.rootMode = it
         })
+
+        root.addView(switchRow(
+            "Root 流量闸（防提权绕过）",
+            "以 root 身份（uid 0）发出的上行限到 128 KB/s——应用就算拿到 root 提权也跑不快；系统自身流量不受影响",
+            Prefs.rootTrafficGate
+        ) {
+            Prefs.rootTrafficGate = it
+            RootBackend.apply()
+        })
+
+        root.addView(auditView())
 
         root.addView(switchRow("接管并阻断 IPv6", "防止应用走 IPv6 绕过限速（默认开启）", Prefs.blockIpv6) {
             Prefs.blockIpv6 = it
@@ -300,9 +318,42 @@ class SettingsActivity : Activity() {
     }
 
     private fun aboutView(): TextView = TextView(this).apply {
-        text = "星河守卫 TV v1.1.0"
+        text = "星河守卫 TV v1.2.0"
         setTextColor(resources.getColor(R.color.text_secondary, theme))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         setPadding(20, 32, 20, 20)
+    }
+
+    /** root 授权审计：后台扫描 Magisk/SuperSU 日志与授权库，列出请求过 root 的应用 */
+    private fun auditView(): TextView {
+        val tv = TextView(this).apply {
+            text = "root 授权记录：扫描中…"
+            setTextColor(resources.getColor(R.color.text_secondary, theme))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+            setPadding(20, 10, 20, 10)
+        }
+        Thread {
+            val records = try {
+                RootAudit.scan()
+            } catch (t: Throwable) {
+                emptyList()
+            }
+            handler.post {
+                tv.text = if (records.isEmpty()) {
+                    "root 授权记录：未找到授权日志（也可能没有应用请求过 root）"
+                } else {
+                    buildString {
+                        appendLine("root 授权记录（找到 ${records.size} 条，请逐条核对）：")
+                        for (r in records) {
+                            val name = AppLoader.nameOf(this@SettingsActivity, r.uid)
+                            val who = if (name != null) "$name（uid ${r.uid}）" else "uid ${r.uid}"
+                            appendLine("· ${r.verb} → $who")
+                        }
+                        append("若有不该有 root 的应用，请到 root 管理器里把它设为「拒绝」并记住。")
+                    }
+                }
+            }
+        }.start()
+        return tv
     }
 }

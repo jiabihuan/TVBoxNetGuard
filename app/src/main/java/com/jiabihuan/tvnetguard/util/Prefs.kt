@@ -93,4 +93,13 @@ object Prefs {
     var blockIpv6: Boolean
         get() = sp.getBoolean(KEY_BLOCK_IPV6, true)
         set(v) = sp.edit().putBoolean(KEY_BLOCK_IPV6, v).apply()
+
+    /**
+     * root 流量闸：以 root 身份（uid 0）发出的上行流量限到很低值。
+     * 应用拿到 root 提权后发包不再命中"按 uid"的限速规则（这正是 PCDN 绕过限速的手段），
+     * 这道闸兜住出口；系统自身以 root 发出的上行极少，不受影响。默认开启。
+     */
+    var rootTrafficGate: Boolean
+        get() = sp.getBoolean("root_traffic_gate", true)
+        set(v) = sp.edit().putBoolean("root_traffic_gate", v).apply()
 }

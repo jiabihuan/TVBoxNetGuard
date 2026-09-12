@@ -95,11 +95,17 @@ object Prefs {
         set(v) = sp.edit().putBoolean(KEY_BLOCK_IPV6, v).apply()
 
     /**
-     * root 流量闸：以 root 身份（uid 0）发出的上行流量限到很低值。
+     * root 流量闸：以 root 身份（uid 0）发出的上行流量限到较低值。
      * 应用拿到 root 提权后发包不再命中"按 uid"的限速规则（这正是 PCDN 绕过限速的手段），
-     * 这道闸兜住出口；系统自身以 root 发出的上行极少，不受影响。默认开启。
+     * 这道闸兜住出口。
+     *
+     * **默认关闭**：早期版本默认开启后，部分盒子出现"一开引擎整台断网"——
+     * 原因是 TCP 的 ACK 由内核以 uid 0 发出，被闸限死后下行也随之中断
+     * （下载必须靠上行 ACK 确认）；且个别盒子的 xt_owner 会把无法归属 socket 的包
+     * 一律判成 uid 0，等于给整机上了一道闸。现在即便开启也会豁免小包，
+     * 但保险起见默认关闭，需要时再手动打开。
      */
     var rootTrafficGate: Boolean
-        get() = sp.getBoolean("root_traffic_gate", true)
+        get() = sp.getBoolean("root_traffic_gate", false)
         set(v) = sp.edit().putBoolean("root_traffic_gate", v).apply()
 }

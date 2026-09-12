@@ -68,7 +68,8 @@ class SettingsActivity : Activity() {
 
         root.addView(switchRow(
             "Root 流量闸（防提权绕过）",
-            "以 root 身份（uid 0）发出的上行限到 128 KB/s——应用就算拿到 root 提权也跑不快；系统自身流量不受影响",
+            "以 root（uid 0）发出的数据块上行限到 512 KB/s，应用拿到 root 提权也跑不快；ACK/DNS 等小包已豁免。" +
+                "默认关闭——若开启后整机上网异常（个别盒子会把正常流量误判成 uid 0），关掉它即可",
             Prefs.rootTrafficGate
         ) {
             Prefs.rootTrafficGate = it
@@ -318,7 +319,7 @@ class SettingsActivity : Activity() {
     }
 
     private fun aboutView(): TextView = TextView(this).apply {
-        text = "星河守卫 TV v1.3.0"
+        text = "星河守卫 TV v1.4.0"
         setTextColor(resources.getColor(R.color.text_secondary, theme))
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
         setPadding(20, 32, 20, 20)

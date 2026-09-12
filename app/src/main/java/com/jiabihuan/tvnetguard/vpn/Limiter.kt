@@ -14,6 +14,17 @@ object Limiter {
 
     private const val GLOBAL = -1000
 
+    /**
+     * 小包豁免阈值（字节，IP 层总长）。纯 ACK 约 40~60 字节、DNS 查询通常 < 128 字节。
+     *
+     * **为什么必须豁免**：下载数据要靠上行 ACK 确认，如果把 ACK 也计入上行配额，
+     * 上行一限死、下行立刻跟着断（表现为"一开引擎整机断网"）。所以小包直接放行，
+     * 只对真正的大块数据限速；小包就算被恶意打满也就几 KB/s，不构成绕过。
+     *
+     * 注意：`blocked`（彻底断网）与"上行 0（禁止上传）"不受此豁免影响，照旧全丢。
+     */
+    private const val ACK_PKT = 128
+
     private class Cfg(
         val upBytes: Long,     // -1 不限，0 禁止
         val downBytes: Long,
@@ -102,14 +113,16 @@ object Limiter {
                 drop(bytes)
                 return
             }
-            val b = bucket(upBuckets, GLOBAL, g.upBytes, g.strict)
-            if (g.strict) {
-                if (!b.tryAcquire(bytes)) {
-                    drop(bytes)
-                    return
+            if (bytes > ACK_PKT) {
+                val b = bucket(upBuckets, GLOBAL, g.upBytes, g.strict)
+                if (g.strict) {
+                    if (!b.tryAcquire(bytes)) {
+                        drop(bytes)
+                        return
+                    }
+                } else {
+                    b.acquire(bytes)
                 }
-            } else {
-                b.acquire(bytes)
             }
         }
 
@@ -123,11 +136,13 @@ object Limiter {
                 drop(bytes)
                 return
             }
-            val b = bucket(upBuckets, uid, c.upBytes, c.strict)
-            if (c.strict) {
-                if (!b.tryAcquire(bytes)) drop(bytes)
-            } else {
-                b.acquire(bytes)
+            if (bytes > ACK_PKT) {
+                val b = bucket(upBuckets, uid, c.upBytes, c.strict)
+                if (c.strict) {
+                    if (!b.tryAcquire(bytes)) drop(bytes)
+                } else {
+                    b.acquire(bytes)
+                }
             }
         }
     }
@@ -140,12 +155,14 @@ object Limiter {
                 drop(bytes)
                 return
             }
-            val b = bucket(downBuckets, GLOBAL, g.downBytes, g.strict)
-            if (g.strict && !b.tryAcquire(bytes)) {
-                drop(bytes)
-                return
-            } else if (!g.strict) {
-                b.acquire(bytes)
+            if (bytes > ACK_PKT) {
+                val b = bucket(downBuckets, GLOBAL, g.downBytes, g.strict)
+                if (g.strict && !b.tryAcquire(bytes)) {
+                    drop(bytes)
+                    return
+                } else if (!g.strict) {
+                    b.acquire(bytes)
+                }
             }
         }
 
@@ -159,11 +176,13 @@ object Limiter {
                 drop(bytes)
                 return
             }
-            val b = bucket(downBuckets, uid, c.downBytes, c.strict)
-            if (c.strict && !b.tryAcquire(bytes)) {
-                drop(bytes)
-            } else if (!c.strict) {
-                b.acquire(bytes)
+            if (bytes > ACK_PKT) {
+                val b = bucket(downBuckets, uid, c.downBytes, c.strict)
+                if (c.strict && !b.tryAcquire(bytes)) {
+                    drop(bytes)
+                } else if (!c.strict) {
+                    b.acquire(bytes)
+                }
             }
         }
     }

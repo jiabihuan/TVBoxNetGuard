@@ -48,8 +48,36 @@ object RootBackend {
 
     fun available(): Boolean = RootShell.hasRoot()
 
-    /** root 流量闸：uid 0（root）出站上行限值，KB/s */
-    private const val GATE_KBPS = 128
+    /** root 流量闸：uid 0（root）出站上行限值，KB/s。太狠会拖死整机，取一个宽容值 */
+    private const val GATE_KBPS = 512
+
+    /**
+     * 小包豁免阈值（字节，含 IP 头）。
+     *
+     * 纯 ACK 约 40~60 字节、DNS 查询通常 < 200 字节。**下载数据必须靠上行 ACK 确认**，
+     * 如果把 ACK 也计入限速配额，上行一限死下行立马断——这就是早期版本"一开引擎
+     * 整台盒子断网"的根因。所以小于该阈值的包一律直接放行，只对真正的大块数据
+     * （视频分片、P2P 上传）限速。小包就算被恶意打满，60 字节 × pps 也才几 KB/s。
+     */
+    private const val SMALL_PKT = 200
+
+    /** tc 路径下判定"大包"的阈值：只有超过它的包才送进限速 class */
+    private const val BIG_PKT = 400
+
+    /**
+     * 实测记录（2026-09，veth + netns 双机模拟，目标限速 200 KB/s）：
+     *
+     * | 方案                        | 实测       |
+     * | ---                         | ---        |
+     * | `iptables -m limit`         | 172 KB/s ✅ |
+     * | `iptables -m statistic nth` | 38 MB/s  ❌ |
+     * | `tc + htb`                  | 190 KB/s ✅ |
+     *
+     * `-m statistic --mode nth` 是**无状态比例丢弃**，限速值取决于"应用原本能跑多快"，
+     * 而这个值随环境剧烈变化（同一个 every=15，在 5 MB/s 宽带上是 333 KB/s，
+     * 在高速链路上是 38 MB/s），完全不可控，已弃用。
+     * 结论：能用 tc 就用 tc（字节级最准），否则用 `-m limit`（按包折算，略偏严但可靠）。
+     */
 
     /** 依据当前规则应用内核限速；无规则且闸关闭则清空。返回是否成功。 */
     fun apply(): Boolean {
@@ -129,6 +157,16 @@ object RootBackend {
             lastMessage = "tc 不可用：${r1.out.take(160)}"
             return false
         }
+        // 安全阀：default class 必须真的建起来。HTB 的 default 指向不存在的 class 时，
+        // 所有未分类流量（也就是整机正常上网流量）会被直接丢弃 = 一开引擎就断网。
+        // 建不起来就回滚 qdisc，回退到 iptables 方案。
+        val chk = RootShell.run(listOf("tc class show dev $wan 2>/dev/null | grep -c '1:9999'"), timeoutSec = 8)
+        val hasDefault = chk.out.trim().trim('"').toIntOrNull()?.let { it > 0 } == true
+        if (!hasDefault) {
+            RootShell.run(listOf("tc qdisc del dev $wan root 2>/dev/null"), timeoutSec = 8)
+            lastMessage = "tc 的 default class 未建成（会误伤正常流量），已回退 iptables 方案"
+            return false
+        }
 
         // 2) IPv4 mangle：分类 / 断网 / 统计
         val v4 = ArrayList<String>()
@@ -138,9 +176,10 @@ object RootBackend {
         v4 += "iptables -t mangle -F $STAT_CHAIN 2>/dev/null"
         v4 += "iptables -t mangle -X $STAT_CHAIN 2>/dev/null"
         v4 += "iptables -t mangle -N $STAT_CHAIN 2>/dev/null"
-        // root 流量闸（IPv4）：uid 0 的出站包分类进 1:2 低速 class
+        // root 流量闸（IPv4）：uid 0 的**大包**才分类进 1:2 低速 class；
+        // 小包（ACK/DNS）走 default class 不限，否则整机下行会被 ACK 断流卡死
         if (Prefs.rootTrafficGate) {
-            v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner 0 -j CLASSIFY --set-class 1:2"
+            v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner 0 -m length --length $BIG_PKT:65535 -j CLASSIFY --set-class 1:2"
         }
         for (rule in rules) {
             val uid = rule.uid
@@ -156,7 +195,8 @@ object RootBackend {
                         v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -p udp -j DROP"
                     }
                     if (id != null) {
-                        v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j CLASSIFY --set-class 1:$id"
+                        // 只对大包分类限速，小包放行保住 ACK
+                        v4 += "iptables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -m length --length $BIG_PKT:65535 -j CLASSIFY --set-class 1:$id"
                     }
                 }
             }
@@ -182,7 +222,7 @@ object RootBackend {
             v6 += "ip6tables -t mangle -N $MANGLE_CHAIN 2>/dev/null"
             // root 流量闸（IPv6）
             if (Prefs.rootTrafficGate) {
-                v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner 0 -j CLASSIFY --set-class 1:2"
+                v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner 0 -m length --length $BIG_PKT:65535 -j CLASSIFY --set-class 1:2"
             }
             for (rule in rules) {
                 val uid = rule.uid
@@ -196,7 +236,7 @@ object RootBackend {
                             v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -p udp -j DROP"
                         }
                         if (id != null) {
-                            v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -j CLASSIFY --set-class 1:$id"
+                            v6 += "ip6tables -t mangle -A $MANGLE_CHAIN -m owner --uid-owner $uid -m length --length $BIG_PKT:65535 -j CLASSIFY --set-class 1:$id"
                         }
                     }
                 }
@@ -227,8 +267,10 @@ object RootBackend {
         v4 += "iptables -t mangle -F $STAT_CHAIN 2>/dev/null"
         v4 += "iptables -t mangle -X $STAT_CHAIN 2>/dev/null"
         v4 += "iptables -t mangle -N $STAT_CHAIN 2>/dev/null"
-        // root 流量闸（IPv4）：uid 0 出站限 GATE_KBPS，防提权应用绕过按应用限速
+        // root 流量闸（IPv4）：uid 0 出站限 GATE_KBPS，防提权应用绕过按应用限速。
+        // 小包（ACK/DNS 等）先放行，否则会连带拖死整机的下行
         if (Prefs.rootTrafficGate) {
+            v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner 0 -m length --length 0:$SMALL_PKT -j ACCEPT"
             val pps0 = max(1, GATE_KBPS * 1024 / AVG_PACKET)
             val burst0 = max(2, pps0 / 5)
             v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner 0 -m limit --limit $pps0/second --limit-burst $burst0 -j ACCEPT"
@@ -248,6 +290,8 @@ object RootBackend {
                         v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -p udp -j DROP"
                     }
                     if (rule.upKbps > 0) {
+                        // 小包豁免：保住 TCP ACK，避免"限速 = 断网"
+                        v4 += "iptables -A $OUT_CHAIN -m owner --uid-owner $uid -m length --length 0:$SMALL_PKT -j ACCEPT"
                         // 按包计数限速：折算成每秒包数（满包估算，实际速率通常偏低 = 更严格）
                         val pps = max(1, rule.upKbps * 1024 / AVG_PACKET)
                         val burst = max(2, pps / 5)
@@ -280,6 +324,7 @@ object RootBackend {
             v6 += "ip6tables -N $OUT_CHAIN 2>/dev/null"
             // root 流量闸（IPv6）
             if (Prefs.rootTrafficGate) {
+                v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner 0 -m length --length 0:$SMALL_PKT -j ACCEPT"
                 val pps0 = max(1, GATE_KBPS * 1024 / AVG_PACKET)
                 val burst0 = max(2, pps0 / 5)
                 v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner 0 -m limit --limit $pps0/second --limit-burst $burst0 -j ACCEPT"
@@ -296,6 +341,7 @@ object RootBackend {
                             v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner $uid -p udp -j DROP"
                         }
                         if (rule.upKbps > 0) {
+                            v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner $uid -m length --length 0:$SMALL_PKT -j ACCEPT"
                             val pps = max(1, rule.upKbps * 1024 / AVG_PACKET)
                             val burst = max(2, pps / 5)
                             v6 += "ip6tables -A $OUT_CHAIN -m owner --uid-owner $uid -m limit --limit $pps/second --limit-burst $burst -j ACCEPT"
